@@ -1,0 +1,67 @@
+/* Artificial Insight 테마(insight-design-theme) Terminal 스타일 토큰. 값은 스킬 assets/web/base.css의 :root와 같다.
+   글꼴은 public/fonts에 자체 제공한다(CDN 없음, 라이선스: public/fonts/licenses/OFL-*.txt).
+   모션 값은 motion-web-builder 기본 스케일에서 골랐다. */
+@font-face { font-family: 'Pretendard'; src: url('/fonts/Pretendard-Regular.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Pretendard'; src: url('/fonts/Pretendard-Medium.woff2') format('woff2'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Pretendard'; src: url('/fonts/Pretendard-Bold.woff2') format('woff2'); font-weight: 600 700; font-display: swap; }
+@font-face { font-family: 'Pretendard'; src: url('/fonts/Pretendard-ExtraBold.woff2') format('woff2'); font-weight: 800 900; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2'); font-weight: 400 500; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('/fonts/JetBrainsMono-SemiBold.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('/fonts/JetBrainsMono-Bold.woff2') format('woff2'); font-weight: 700 800; font-display: swap; }
+/* 짧은 제목용 한글 픽셀 글꼴: 굵기는 400 하나(가짜 굵게 방지) */
+@font-face { font-family: 'NeoDunggeunmo Pro'; src: url('/fonts/NeoDunggeunmoPro-Regular.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+
+:root {
+  --navy-950: #0B1220;
+  --navy-900: #0F1828;
+  --navy-800: #162033;
+  --navy-700: #1F2B42;
+  --navy-600: #2B3A56;
+  --slate-500: #64748B; /* 픽셀 음영 전용(글자에 쓰지 않음) */
+  --slate-400: #94A3B8;
+  --slate-300: #CBD5E1;
+  --slate-200: #E2E8F0;
+  --ivory: #F6F1E7;
+  --gold: #FFB52E; /* 한 화면에 한 곳 */
+
+  --bg: var(--navy-800);
+  --bg-deep: var(--navy-950);
+  --bg-lift: var(--navy-900);
+  --panel: var(--navy-900);
+  --panel-raise: var(--navy-700);
+  --line: var(--navy-600);
+  --line-soft: rgba(43, 58, 86, 0.7);
+  --text: var(--slate-200);
+  --text-2: var(--slate-300);
+  --text-3: var(--slate-400);
+  --accent: var(--ivory);
+  --accent-strong: var(--ivory);
+  --topic: var(--gold);
+  --focus: var(--ivory);
+  --danger: var(--gold);
+
+  --radius-sm: 0;
+  --radius: 0;
+  --radius-lg: 0;
+  --shadow: none;
+
+  --font: 'Pretendard', 'Apple SD Gothic Neo', sans-serif;
+  --mono: 'JetBrains Mono', 'Pretendard', monospace;
+  --pixel: 'NeoDunggeunmo Pro', 'Pretendard', monospace;
+
+  --sc-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --sc-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --sc-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --sc-d-fast: 160ms;
+  --sc-d-base: 240ms;
+  --sc-d-slow: 420ms;
+  --sc-shift-sm: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --sc-d-base: 120ms;
+    --sc-d-slow: 160ms;
+    --sc-shift-sm: 0px;
+  }
+}

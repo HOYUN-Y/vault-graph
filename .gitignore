@@ -1,0 +1,22 @@
+# 의존성 · 빌드 결과
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 로컬 검증 산출물(화면 캡처 등)
+captures/
+
+# 실제 자료 연결 경로 · 개인 설정(추적하지 않음)
+.local/
+*.local
+.env
+.env.*
+
+# 운영체제 · 편집기
+.DS_Store
+.vscode/
+.idea/
+npm-debug.log*
+
+# 로컬 볼트 설정(실제 절대경로가 들어가므로 추적하지 않음). 예시는 settings.example.json
+/settings.json
