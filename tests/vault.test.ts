@@ -96,7 +96,7 @@ test('구조 문제 보고: 같은 경로 중복 · 끊긴 링크 · 볼트 밖 
   assert.deepEqual(v.g.sourceRoots, ['src-work'], 'src-* 최상위 폴더만 원문 루트로 찾는다');
   assert.equal(v.g.docs.length, 4, '정규화 후 같은 경로(./ · ..)는 하나만 남는다: 라우터 · 영역 · 자료 · 닿지 않는 문서');
   const none = vault({ w: ['work.md', ''] });
-  assert.ok(none.g.problems.some(p => p.includes('라우터(CLAUDE.md)는 하나여야')));
+  assert.ok(none.g.problems.some(p => p.includes('라우터는 하나여야')));
 });
 
 test('데모 볼트: 스킬 구조(최상위 안내 문서 · src-* 원문 · 상대경로 링크)이고, 링크만으로 찾은 분류가 작성 정의와 같다', () => {

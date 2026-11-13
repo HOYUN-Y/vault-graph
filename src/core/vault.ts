@@ -19,6 +19,7 @@ export interface VaultFile {
   updated: string;
   /** 형식을 확장자 대신 지정할 때(실제 볼트: 폴더 'dir', 알 수 없는 확장자 'other') */
   format?: DocFormat;
+  kind?: NodeKind;
 }
 
 export interface VaultRead {
@@ -87,7 +88,7 @@ function classify(router: string | undefined, links: Map<string, string[]>, kind
   walk();
   for (const t of top) if (!parent.has(t)) { parent.set(t, router); if (AREA_AXIS.has(kindOf(t))) queue.push(t); }
   walk();
-  const topics = top.filter(t => kindOf(t) === 'moc');
+  const topics = [...parent.keys()].filter(t => kindOf(t) === 'moc');
   while (topics.length) {
     const m = topics.shift()!;
     for (const t of links.get(m) ?? []) {
@@ -113,7 +114,7 @@ export function readVault(files: VaultFile[]): VaultRead {
     if (ids.has(id)) { problems.push(`ID 충돌: ${path}`); continue; }
     ids.add(id);
     idOfPath.set(path, id);
-    entries.push({ file, path, id, kind: kindOfPath(path), format });
+    entries.push({ file, path, id, kind: file.kind ?? kindOfPath(path), format });
   }
   const kindById = new Map(entries.map(e => [e.id, e.kind]));
   const dirs = new Set<string>();

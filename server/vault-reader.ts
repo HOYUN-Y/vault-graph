@@ -8,10 +8,12 @@
 import { createHash } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
-import { normalizePath, parseLinks, relativeHref, resolveHref } from '../src/core/markdown';
+import { literalRanges, normalizePath, parseLinks, relativeHref, resolveHref } from '../src/core/markdown';
 import { formatOfPath, opaqueId } from '../src/core/vault';
+import { kindOfPath } from '../src/core/vault';
 import type { VaultFile } from '../src/core/vault';
-import { PrivacyRuleError, isPrivate, isSecretPath, loadPrivatePaths, makeRedactor } from './privacy';
+import type { NodeKind } from '../src/core/types';
+import { LEDGER, POLICY_DIR, PrivacyRuleError, isPolicyPath, isPrivate, isSecretPath, loadPrivatePaths, makeRedactor } from './privacy';
 
 export type VaultState = 'connected' | 'blocked' | 'unavailable' | 'invalid';
 
@@ -49,6 +51,8 @@ export interface Snapshot {
 }
 
 const SKIP = new Set(['CLAUDE.md', 'AGENTS.md']);
+/** 파일 목록 이름(catalog.md · catalog--*.md). 물리 위치 기준 재고 목록이라 의미 색인이 아니다 */
+export const isCatalogName = (rel: string) => /^catalog(--.*)?\.md$/i.test(rel.split('/').pop()!);
 const META_TIMEOUT = 1500;
 /** 안내 문서(라우터 포함) 읽기 상한 */
 export const GUIDE_MAX_BYTES = 1024 * 1024, GUIDE_TIMEOUT = 3000;
@@ -124,10 +128,10 @@ export type Policy =
   | { ok: false; state: VaultState; reason: string; print: string };
 
 /** 등록 원문 루트: 라우터가 링크한 src-* 폴더(비공개 · 비밀 제외) */
-export function routerRoots(router: string, hidden: (rel: string) => boolean): string[] {
+export function routerRoots(router: string, hidden: (rel: string) => boolean, routerPath = 'CLAUDE.md'): string[] {
   const roots: string[] = [];
   for (const link of parseLinks(router)) {
-    const t = resolveHref('CLAUDE.md', link.href);
+    const t = resolveHref(routerPath, link.href);
     if (t.type === 'path' && /^src-[^/]+$/.test(t.path) && !hidden(t.path) && !roots.includes(t.path)) roots.push(t.path);
   }
   return roots;
@@ -137,7 +141,7 @@ export function routerRoots(router: string, hidden: (rel: string) => boolean): s
  * 정책 로더(스냅숏 · 게시 확인 · 미리보기 공통): 라우터는 실경로 · 크기 · 시간 확인 뒤에만, 장부는 스킬 규칙(볼트 안 실경로) 확인 뒤에만 읽는다.
  * 지문(print)은 검증을 통과해 읽은 내용으로만 만든다.
  */
-export async function loadPolicy(vault: string): Promise<Policy> {
+export async function loadPolicy(vault: string, routerPath = 'CLAUDE.md'): Promise<Policy> {
   const fail = (state: VaultState, reason: string): Policy => ({ ok: false, state, reason, print: `${state}:${reason}` });
   if (!path.isAbsolute(vault)) return fail('invalid', '설정의 vaultPath가 절대경로가 아닙니다');
   let vaultReal: string;
@@ -145,36 +149,99 @@ export async function loadPolicy(vault: string): Promise<Policy> {
     vaultReal = await fsp.realpath(vault);
     if (!(await fsp.stat(vaultReal)).isDirectory()) return fail('invalid', 'vaultPath가 폴더가 아닙니다');
   } catch { return fail('unavailable', '볼트 폴더에 접근할 수 없습니다(연결 끊김 · 이동 · 권한)'); }
-  const router = await readGuide(path.join(vault, 'CLAUDE.md'), vaultReal, new Map(), () => false);
-  if (router === null) return fail('invalid', '볼트 최상위의 CLAUDE.md(라우터)를 읽을 수 없습니다(없음 · 볼트 밖 링크 · 크기 · 인코딩)');
+  if (isPolicyPath(routerPath) || isSecretPath(routerPath)) return fail('blocked', '라우터 경로를 사용할 수 없습니다');
+  const router = await readGuide(path.join(vault, routerPath), vaultReal, new Map(), rel => isPolicyPath(rel) || isSecretPath(rel));
+  if (router === null) return fail('invalid', '지정한 라우터를 읽을 수 없습니다(없음 · 작업폴더 밖 링크 · 크기 · 인코딩)');
   let priv: Set<string>;
   try { priv = loadPrivatePaths(vault, router); }
   catch (error) {
     return fail('blocked', `비공개 규칙 확인 실패로 연결을 차단했습니다: ${error instanceof PrivacyRuleError ? error.message : '규칙을 확인할 수 없습니다'}`);
   }
-  const hidden = (rel: string) => isPrivate(rel, priv) || isSecretPath(rel);
-  const roots = routerRoots(router, hidden);
+  const hidden = (rel: string) => isPolicyPath(rel) || isPrivate(rel, priv) || isSecretPath(rel);
+  if (hidden(routerPath)) return fail('blocked', '라우터가 비공개 경로입니다');
+  const roots = routerRoots(router, hidden, routerPath);
   // 정책용 금지 범위(표시 · 읽기 대상 목록과 분리): 비공개 항목과 비공개 · 비밀 이름의 등록 루트 링크가 실제로 가리키는 실경로.
   // 이름 경로의 realpath 메타데이터만 확인하고 그 아래를 나열하거나 읽지 않는다. 닿지 않는(없음 · 오프라인) 항목은 이름 기준 규칙만 적용된다.
-  const guarded = new Set(priv);
+  const guarded = new Set([...priv, POLICY_DIR, LEDGER]);
   for (const link of parseLinks(router)) {
-    const t = resolveHref('CLAUDE.md', link.href);
+    const t = resolveHref(routerPath, link.href);
     if (t.type === 'path' && /^src-[^/]+$/.test(t.path) && hidden(t.path)) guarded.add(t.path);
   }
   const privReals = [...new Set((await Promise.all([...guarded].map(rel => withTimeout(fsp.realpath(path.join(vault, rel)).catch(() => null), META_TIMEOUT))))
     .filter((r): r is string => typeof r === 'string' && r !== 'timeout'))].sort();
+  const routerReal = await fsp.realpath(path.join(vault, routerPath)).catch(() => null);
+  if (!routerReal || underPrivate(routerReal, privReals)) return fail('blocked', '라우터가 비공개 경로입니다');
   const print = createHash('sha256').update(router).update('\0').update([...priv].sort().join('\n')).update('\0').update(privReals.join('\n')).digest('hex');
   return { ok: true, vaultReal, router, priv, roots, privReals, print };
 }
 
-export async function readSnapshot(vault: string): Promise<Snapshot> {
-  const routerFile = path.join(vault, 'CLAUDE.md');
+function tableRows(text: string): string[][][] {
+  const tables: string[][][] = [];
+  let current: string[][] = [];
+  const ranges = literalRanges(text);
+  for (const m of text.matchAll(/<!--(?:[\s\S]*?-->|[\s\S]*$)/g)) ranges.push([m.index, m.index + m[0].length]);
+  for (const match of text.matchAll(/[^\r\n]*(?:\r\n|\r|\n|$)/g)) {
+    const line = match[0].replace(/[\r\n]+$/, '');
+    const literal = ranges.some(([start, end]) => match.index >= start && match.index < end);
+    if (!literal && /^\s*\|.*\|\s*$/.test(line)) current.push(line.trim().slice(1, -1).split('|').map(x => x.trim()));
+    else if (current.length) { tables.push(current); current = []; }
+  }
+  if (current.length) tables.push(current);
+  return tables;
+}
+
+const AREA_HEADERS = new Set(['분야', '영역', 'area']);
+const FOLDER_HEADERS = new Set(['폴더', 'folder']);
+const GUIDE_HEADERS = new Set(['색인', '안내', 'index', 'guide', '하위 색인', '하위 안내', '안내 문서', '먼저 읽을 안내 문서', 'subindex', 'sub index', 'sub-index']);
+const headerKey = (value: string) => value.normalize('NFC').trim().toLowerCase().replace(/\s+/g, ' ');
+
+function areaLinks(text: string, from: string): { rows: { folder: string; index: string }[]; invalid: number } {
+  const rows: { folder: string; index: string }[] = [];
+  let invalid = 0;
+  for (const table of tableRows(text)) {
+    const header = table[0].map(headerKey);
+    const area = header.findIndex(x => AREA_HEADERS.has(x));
+    const folder = header.findIndex(x => FOLDER_HEADERS.has(x));
+    const index = header.findIndex(x => GUIDE_HEADERS.has(x));
+    if (area < 0 || folder < 0 || index < 0 || new Set([area, folder, index]).size !== 3) continue;
+    for (const row of table.slice(2)) {
+      const folderText = row[folder]?.match(/`([^`]+)`/)?.[1];
+      const link = parseLinks(row[index] ?? '');
+      const f = folderText && resolveHref(from, folderText.replace(/\/$/, ''));
+      const t = link.length === 1 && resolveHref(from, link[0].href);
+      if (!row[area] || !f || f.type !== 'path' || !t || t.type !== 'path' || !/\.md$/i.test(t.path)) { invalid++; continue; }
+      rows.push({ folder: f.path, index: t.path });
+    }
+  }
+  const duplicates = new Set(rows.filter((r, i) => rows.some((x, j) => i !== j && (x.index === r.index))).map(r => r.index));
+  invalid += rows.filter(r => duplicates.has(r.index)).length;
+  return { rows: rows.filter(r => !duplicates.has(r.index)), invalid };
+}
+
+function guideLinks(text: string, from: string, folder: string): string[] {
+  const paths = new Set<string>();
+  for (const link of parseLinks(text)) {
+    const t = resolveHref(from, link.href);
+    if (t.type === 'path' && (!folder || t.path.startsWith(folder + '/')) && /(^|\/)INDEX\.md$/i.test(t.path)) paths.add(t.path);
+  }
+  for (const table of tableRows(text)) {
+    const columns = table[0].map((h, i) => GUIDE_HEADERS.has(headerKey(h)) ? i : -1).filter(i => i >= 0);
+    for (const row of table.slice(2)) for (const column of columns) for (const link of parseLinks(row[column] ?? '')) {
+      const t = resolveHref(from, link.href);
+      if (t.type === 'path') paths.add(t.path);
+    }
+  }
+  return [...paths];
+}
+
+export async function readSnapshot(vault: string, structure: 'indexed' | 'workspace' = 'indexed', routerPath = 'CLAUDE.md'): Promise<Snapshot> {
+  const routerFile = path.join(vault, routerPath);
   const ledgerFile = path.join(vault, '.secondbrain', 'private-paths.txt');
-  const policy = await loadPolicy(vault);
+  const policy = await loadPolicy(vault, routerPath);
   if (!policy.ok) return empty(policy.state, policy.reason, [routerFile, ledgerFile]);
   const { vaultReal, router, priv, privReals } = policy;
   const redact = makeRedactor(priv);
-  const hidden = (rel: string) => isPrivate(rel, priv) || isSecretPath(rel);
+  const hidden = (rel: string) => isPolicyPath(rel) || isPrivate(rel, priv) || isSecretPath(rel) || redact(rel) !== rel;
   let listing: string[] | null = null;
   try { listing = await fsp.readdir(vault); } catch { listing = null; }
 
@@ -183,23 +250,55 @@ export async function readSnapshot(vault: string): Promise<Snapshot> {
   const reals = await rootReals(vault, roots);
 
   // 1) 안내 문서 BFS: 라우터 → 링크로 닿는 최상위 .md만 읽는다
-  const texts = new Map<string, string>([['CLAUDE.md', router]]);
-  const diskName = new Map<string, string>([['CLAUDE.md', 'CLAUDE.md']]);
-  const order = ['CLAUDE.md'];
+  const texts = new Map<string, string>([[routerPath, router]]);
+  const diskName = new Map<string, string>([[routerPath, routerPath]]);
+  const order = [routerPath];
+  const kinds = new Map<string, NodeKind>([[routerPath, 'router']]);
+  const guideReals = new Set<string>([await fsp.realpath(routerFile)]);
   const problems: string[] = [];
   const unreadable = new Set<string>();
+  // 작업폴더는 명시된 표의 링크와 INDEX.md만 안내 문서로 읽는다.
+  const areaRows = structure === 'workspace' ? areaLinks(router, routerPath) : { rows: [], invalid: 0 };
+  const realAreas = await Promise.all(areaRows.rows.map(row => fsp.realpath(path.join(vault, row.index)).catch(() => null)));
+  const duplicateReals = new Set(realAreas.filter((real, i) => real && realAreas.indexOf(real) !== i));
+  if (duplicateReals.size) {
+    areaRows.invalid += realAreas.filter(real => real && duplicateReals.has(real)).length;
+    areaRows.rows = areaRows.rows.filter((_, i) => !realAreas[i] || !duplicateReals.has(realAreas[i]));
+  }
+  const folders = new Map(areaRows.rows.map(row => [row.index, row.folder]));
+  if (areaRows.invalid) problems.push(`해석할 수 없는 분야 선언 ${areaRows.invalid}개를 건너뛰었습니다`);
+  if (structure === 'workspace' && !areaRows.rows.length) return { ...empty('invalid', '라우터에서 연결된 분야 색인을 찾지 못했습니다', [routerFile, ledgerFile]), problems, counts: { ...empty('invalid', '').counts, problems: problems.length }, policy: policy.print };
+  let limitWarned = false;
+  // 라우터나 다른 파일 목록에서 닿은 파일 목록은 따라가지 않는다(자동 생성 표식이 없는 이전 형식 목록 포함).
+  // 영역 · 하위 색인이 직접 링크한 catalog 이름 문서는 수작업 색인일 수 있어 계속 읽는다.
+  const catalogSkipped = new Set<string>();
   for (let i = 0; i < order.length; i++) {
     const from = order[i];
-    for (const link of parseLinks(texts.get(from)!)) {
-      const t = resolveHref(from, link.href);
-      if (t.type !== 'path' || t.path.includes('/') || !/\.md$/i.test(t.path) || SKIP.has(t.path) || hidden(t.path)) continue;
-      if (texts.has(t.path) || unreadable.has(t.path)) continue;
-      const name = await topLevelName(vault, t.path, listing);
+    const links = structure === 'workspace' && i === 0 ? areaRows.rows.map(row => row.index) : structure === 'workspace' ? guideLinks(texts.get(from)!, from, folders.get(from) ?? '') : parseLinks(texts.get(from)!).map(link => resolveHref(from, link.href)).filter((t): t is Extract<typeof t, { type: 'path' }> => t.type === 'path').map(t => t.path);
+    for (const rel of links) {
+      if (!/\.md$/i.test(rel) || hidden(rel) || (structure === 'indexed' && (rel.includes('/') || SKIP.has(rel)))) continue;
+      if (texts.has(rel) || unreadable.has(rel)) continue;
+      if (isCatalogName(rel) && (from === routerPath || isCatalogName(from))) { catalogSkipped.add(rel); continue; }
+      if (order.length >= 500) { if (!limitWarned) problems.push('안내 문서 상한 500개에 도달해 나머지를 읽지 않았습니다'); limitWarned = true; break; }
+      const name = structure === 'indexed' ? await topLevelName(vault, rel, listing) : rel;
+      const real = name ? await fsp.realpath(path.join(vault, name)).catch(() => null) : null;
+      if (real && guideReals.has(real)) continue;
       const text = name ? await readGuide(path.join(vault, name), vaultReal, reals, hidden, privReals) : null;
-      if (text === null) { unreadable.add(t.path); continue; }
-      texts.set(t.path, text); diskName.set(t.path, name!); order.push(t.path);
+      if (text === null) { unreadable.add(rel); continue; }
+      if (real) guideReals.add(real);
+      // 자동 파일 목록은 존재 메타데이터이며 의미 색인이 아니다. 수천 쪽의 목록 링크를 그래프로 확장하지 않는다.
+      const body = text.startsWith('<!-- secondbrain-index-sync:catalog ')
+        ? '# 파일 목록 (자동 생성)\n\n자동 파일 목록은 의미 관계 그래프에서 확장하지 않습니다. 전체 목록은 볼트의 원본 안내 파일에서 확인할 수 있습니다.\n'
+        : text;
+      texts.set(rel, body); diskName.set(rel, name!); order.push(rel);
+      if (structure === 'workspace' && i !== 0) folders.set(rel, folders.get(from) ?? '');
+      if (structure === 'workspace') {
+        const base = rel.split('/').pop()!;
+        kinds.set(rel, i === 0 ? 'area' : base.startsWith('moc-') ? 'moc' : base.startsWith('project-') ? 'guide' : 'subindex');
+      }
     }
   }
+  if (structure === 'workspace' && order.length === 1) return { ...empty('invalid', '분야 색인을 읽을 수 없어 연결 구조가 불완전합니다', [routerFile, ledgerFile, ...areaRows.rows.map(row => path.join(vault, row.index))]), policy: policy.print };
   if (unreadable.size) problems.push(`링크한 안내 문서 ${unreadable.size}개를 읽지 않았습니다(없음 · 권한 · 인코딩 · 크기 · 볼트 밖 · 비공개 실경로)`);
 
   // 3) 연결 자료 후보: 안내 문서가 링크한 최상위 안내 문서 밖의 대상
@@ -216,7 +315,7 @@ export async function readSnapshot(vault: string): Promise<Snapshot> {
       const t = resolveHref(from, link.href);
       if (t.type !== 'path') continue;
       if (hidden(t.path)) { hiddenLinks++; continue; }
-      if (texts.has(t.path) || roots.includes(t.path) || (!t.path.includes('/') && /\.md$/i.test(t.path))) continue;
+      if (texts.has(t.path) || roots.includes(t.path) || (structure === 'indexed' && !t.path.includes('/') && /\.md$/i.test(t.path))) continue;
       linkCount++;
       if (!targets.has(t.path)) {
         const line = lineOf(text, link.index);
@@ -243,7 +342,8 @@ export async function readSnapshot(vault: string): Promise<Snapshot> {
     let isDir = target.dirHint;
     try { isDir = (await fsp.stat(real)).isDirectory(); } catch { /* 형식 추정 유지 */ }
     const viaRoot = aliases.find(a => roots.includes(a.split('/')[0]));
-    return { target, canonical: viaRoot ?? target.rel, meta: (viaRoot ? 'ok' : 'outside') as MaterialRef['meta'], isDir };
+    const internal = structure === 'workspace' && inside(real, vaultRealResolved);
+    return { target, canonical: viaRoot ?? (internal ? aliases.find(a => !roots.includes(a.split('/')[0])) : undefined) ?? target.rel, meta: (viaRoot || internal ? 'ok' : 'outside') as MaterialRef['meta'], isDir };
   });
 
   const canonicalOf = new Map<string, string>();
@@ -255,7 +355,7 @@ export async function readSnapshot(vault: string): Promise<Snapshot> {
     if ([...materials.values()].some(x => x.rel === m.canonical)) continue;
     materials.set(opaqueId(m.canonical), { rel: m.canonical, meta: m.meta });
     const format = m.isDir ? 'dir' : formatOfPath(m.canonical) ?? 'other';
-    files.push({ path: m.canonical, title: redact(m.target.label), summary: redact(m.target.summary), body: '', updated: '', format });
+    files.push({ path: m.canonical, title: redact(m.target.label), summary: redact(m.target.summary), body: '', updated: '', format, ...(structure === 'workspace' ? { kind: 'material' as const } : {}) });
   }
   // 숨긴 대상(실경로가 비공개)도 링크 다시 쓰기에서 지운다
   const dropped = new Set([...targets.keys()].filter(rel => !canonicalOf.has(rel)));
@@ -264,7 +364,7 @@ export async function readSnapshot(vault: string): Promise<Snapshot> {
   // 5) 안내 문서 본문: 비공개 줄 · 비공개/비밀 링크 지움, 별칭은 정규 경로로, 이름 · 절대경로 지우기
   for (const from of order) {
     let text = texts.get(from)!;
-    if (from === 'CLAUDE.md') text = text.split(/\r\n|\r|\n/).filter(line => !line.normalize('NFC').includes('비공개')).join('\n');
+    if (from === routerPath) text = text.split(/\r\n|\r|\n/).filter(line => !line.normalize('NFC').includes('비공개')).join('\n');
     const parts: string[] = [];
     let at = 0;
     for (const link of parseLinks(text)) {
@@ -275,8 +375,8 @@ export async function readSnapshot(vault: string): Promise<Snapshot> {
       // 볼트 밖 · 절대 · 잘못된 경로 링크는 주소를 보내지 않고 이름만 남긴다(바깥 폴더 이름 노출 · 깨진 링크 경고 방지)
       if (t.type === 'invalid') { parts.push(`${link.label} [볼트 밖 링크]`); continue; }
       // 연결하지 않는 최상위 문서(AGENTS.md 등 의도적 제외 · 읽지 못한 안내 문서)는 링크 대신 이름만 남긴다
-      if (t.type === 'path' && t.path !== from && !t.path.includes('/') && /\.md$/i.test(t.path) && !texts.has(t.path)) {
-        parts.push(`${link.label} [${SKIP.has(t.path) ? '연결 제외 문서' : '읽지 않은 안내 문서'}]`);
+      if (structure === 'indexed' && t.type === 'path' && t.path !== from && !t.path.includes('/') && /\.md$/i.test(t.path) && !texts.has(t.path)) {
+        parts.push(`${link.label} [${SKIP.has(t.path) ? '연결 제외 문서' : catalogSkipped.has(t.path) ? '파일 목록 · 연결 제외' : '읽지 않은 안내 문서'}]`);
         continue;
       }
       const canonical = t.type === 'path' ? canonicalOf.get(t.path) : undefined;
@@ -286,7 +386,7 @@ export async function readSnapshot(vault: string): Promise<Snapshot> {
     parts.push(text.slice(at));
     const body = redact(parts.join(''));
     const heading = body.match(/^#\s+(.+)$/m)?.[1]?.trim();
-    files.unshift({ path: from, title: from === 'CLAUDE.md' ? 'CLAUDE.md' : redact(heading || from.replace(/\.md$/i, '')), summary: '', body, updated: '' });
+    files.unshift({ path: from, title: from === routerPath ? routerPath : redact(heading || from.replace(/\.md$/i, '')), summary: '', body, updated: '', ...(structure === 'workspace' || from === routerPath ? { kind: kinds.get(from) ?? kindOfPath(from) } : {}) });
   }
 
   const hash = createHash('sha256');
@@ -295,7 +395,7 @@ export async function readSnapshot(vault: string): Promise<Snapshot> {
   return {
     state: 'connected', reason: null, files, materials, roots, problems: problems.map(redact),
     counts: { guides: order.length, materials: materials.size, links: linkCount, roots: roots.length, privateRules: priv.size, hiddenLinks, problems: problems.length },
-    watch: [routerFile, ledgerFile, ...order.map(rel => path.join(vault, diskName.get(rel)!))],
+    watch: [routerFile, ledgerFile, ...order.map(rel => path.join(vault, diskName.get(rel)!)), ...[...unreadable].map(rel => path.join(vault, rel))],
     signature: hash.digest('hex').slice(0, 16),
     policy: policy.print
   };

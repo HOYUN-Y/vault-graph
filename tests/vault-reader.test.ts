@@ -68,3 +68,42 @@ test('규칙 실패는 차단(데이터 0), 볼트 접근 불가 · 라우터 �
     assert.equal((await readSnapshot(fx.vault)).state, 'invalid');
   } finally { rmSync(fx.base, { recursive: true, force: true }); }
 });
+
+test('라우터 · 파일 목록에서 닿은 파일 목록은 읽지 않고, 영역 색인이 링크한 수작업 색인과 표식 목록은 처리한다', async () => {
+  const fx = makeFixture();
+  try {
+    writeFileSync(path.join(fx.vault, 'CLAUDE.md'), '[목록](catalog.md)\n[이전 목록](catalog--old.md)\n[업무](work.md)\n- 비공개 장부: .secondbrain/private-paths.txt\n');
+    writeFileSync(path.join(fx.vault, 'work.md'), '# 업무\n[수작업](catalog--manual.md)\n[업무 목록](catalog--gen.md)');
+    // 표식 없는 이전 형식 목록: 라우터에서 닿으므로 그 아래 쪽까지 모두 따라가지 않는다
+    writeFileSync(path.join(fx.vault, 'catalog--old.md'), '# 이전 목록\n[쪽](catalog--old--p1.md)');
+    writeFileSync(path.join(fx.vault, 'catalog--old--p1.md'), '# 쪽\n[파일](src-work/a.md)');
+    // 영역 색인이 링크한 자동 목록: 문서는 남기되 목록 링크는 확장하지 않는다
+    writeFileSync(path.join(fx.vault, 'catalog--gen.md'), '<!-- secondbrain-index-sync:catalog 자동 생성 파일 -->\n# 업무 목록\n[쪽](catalog--gen--p1.md)');
+    writeFileSync(path.join(fx.vault, 'catalog--manual.md'), '# 직접 쓴 색인');
+    const pages = Array.from({ length: 505 }, (_, i) => `[목록](catalog--p${i}.md)`).join('\n');
+    writeFileSync(path.join(fx.vault, 'catalog.md'), '<!-- secondbrain-index-sync:catalog 자동 생성 파일 -->\n# 목록\n' + pages);
+    const s = await readSnapshot(fx.vault);
+    assert.deepEqual(s.files.map(f => f.path).sort(), ['CLAUDE.md', 'catalog--gen.md', 'catalog--manual.md', 'work.md']);
+    assert.equal(s.counts.guides, 4);
+    assert.equal(s.materials.size, 0);
+    assert.deepEqual(s.problems, []);
+    assert.ok(s.files.find(f => f.path === 'catalog--gen.md')?.body.includes('확장하지 않습니다'));
+    const router = s.files.find(f => f.path === 'CLAUDE.md')!.body;
+    assert.ok(router.includes('목록 [파일 목록 · 연결 제외]') && router.includes('이전 목록 [파일 목록 · 연결 제외]'));
+    assert.deepEqual(readVault(toPublic(s).files).problems, []);
+  } finally { rmSync(fx.base, { recursive: true, force: true }); }
+});
+
+test('비공개 이름과 겹친 공개 경로는 주소를 변조하지 않고 링크째 숨긴다', async () => {
+  const fx = makeFixture();
+  try {
+    writeFileSync(path.join(fx.vault, 'CLAUDE.md'), '[업무](work.md)\n- 비공개: `src-work/legacy`\n- 비공개 장부: .secondbrain/private-paths.txt\n');
+    // 이 파일은 비공개 폴더 아래가 아니지만 이름을 가리면 주소가 달라진다.
+    writeFileSync(path.join(fx.vault, 'work.md'), '[자료](src-work/showcase-legacy/result.json)');
+    const s = await readSnapshot(fx.vault);
+    assert.equal(s.materials.size, 0);
+    assert.ok(s.files.find(f => f.path === 'work.md')?.body.includes('[비공개 링크]'));
+    assert.deepEqual(readVault(toPublic(s).files).problems, []);
+    assert.ok(!JSON.stringify(toPublic(s)).includes('legacy'));
+  } finally { rmSync(fx.base, { recursive: true, force: true }); }
+});

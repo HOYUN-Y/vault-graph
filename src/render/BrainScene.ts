@@ -13,6 +13,7 @@ import { holdLabel, labelSide, type LabelBlock, type LabelHold, type LabelPace }
 import type { DocFormat, EdgeKind, NodeKind } from '../core/types';
 import { fitDistance as fitFor } from './fit';
 import { assemblyRadius } from './glow-lift';
+import { foldScale, labelText } from './fold';
 import { CELL, assembly, snapToGrid } from './voxel';
 
 export interface SceneNodeInput { id: string; kind: NodeKind; format: DocFormat; title: string; color: string; pos: Vec3; brain: Vec3; depth: number }
@@ -25,6 +26,8 @@ export interface SceneState {
   emphasis: ReadonlySet<string> | null;
   selected: string | null;
   hover: string | null;
+  /** 보이지만 접힌 색인 → 접힌 하위 개수. 개수에 따라 덩어리가 커지고 이름표에 +개수가 붙는다 */
+  folded?: ReadonlyMap<string, number>;
 }
 export interface SceneHooks {
   onPick(id: string | null): void;
@@ -475,6 +478,9 @@ export class BrainScene {
     this.labelFresh = true;
     const N = this.nodes.length;
     const { visible, emphasis, selected, hover } = next;
+    const folded = next.folded;
+    // 덩어리 방식(큰 그래프)에서는 감춘 노드를 크기 0으로 지운다. 복셀은 불투명이라 흐리게 두면 배경색 칸이 되어 덩어리를 가린다(투명도 0.05 미만은 누를 수도 없다)
+    const ghostAlpha = folded ? 0 : 0.2, ghostScale = folded ? 0 : 0.42;
     const neighbors = new Set<string>();
     this.edges.forEach((e, i) => {
       const kind = next.shown.get(e.key);
@@ -487,11 +493,12 @@ export class BrainScene {
     for (let i = 0; i < N; i++) {
       const n = this.nodes[i];
       const vis = visible.has(n.id);
-      let alpha = vis ? 1 : 0.2, scale = vis ? 1 : 0.42, glow = vis ? GLOW[n.kind] : 0;
+      const fold = folded?.get(n.id);
+      let alpha = vis ? 1 : ghostAlpha, scale = vis ? (fold ? foldScale(fold) : 1) : ghostScale, glow = vis ? GLOW[n.kind] : 0;
       const outside = emphasis && !emphasis.has(n.id) && n.kind !== 'router';
       if (outside) { alpha *= 0.22; glow *= 0.15; }
       if (selected) {
-        if (n.id === selected) { alpha = 1; scale = 1.55; glow = 1.7; }
+        if (n.id === selected) { alpha = 1; scale = Math.max(1.55, scale); glow = 1.7; }
         else if (neighbors.has(n.id)) { alpha = Math.max(alpha, 0.95); glow = Math.max(glow, 0.7); }
         else { alpha *= 0.3; glow *= 0.25; }
       }
@@ -505,7 +512,7 @@ export class BrainScene {
     this.edges.forEach((e, i) => {
       const kind = this.eKind[i];
       const shown = this.eShown[i] === 1;
-      let a = shown ? BASE_ALPHA[kind] * this.density * (kind === 'topic' && this.density < 1 ? 0.75 : 1) : 0.032;
+      let a = shown ? BASE_ALPHA[kind] * this.density * (kind === 'topic' && this.density < 1 ? 0.75 : 1) : folded ? 0 : 0.032;
       if (shown && emphasis && !((emphasis.has(e.a) || this.nodes[this.index.get(e.a)!].kind === 'router') && emphasis.has(e.b))) a *= 0.16;
       if (selected) a = this.eLit[i] ? 0.95 : a * 0.22;
       else if (shown && hover && (e.a === hover || e.b === hover)) a = Math.min(1, a * 2.2);
@@ -1087,9 +1094,11 @@ export class BrainScene {
       const n = this.nodes[c.i];
       const isSel = n.id === selected;
       const h = n.kind === 'area' ? 22 : 18;
+      const count = this.state.folded?.get(n.id);
+      const text = labelText(n.title, count);
       // 너비는 실제로 그린 뒤 잰 값(선택 표시는 굵기 · 테두리가 달라 따로 잰다). 재기 전에는 한글을 넓게 잡아 겹침을 막는다
-      const key = isSel ? `${n.id}*` : n.id;
-      const w = this.labelWidth.get(key) ?? labelEstimate(n.title, n.kind === 'area' ? 14 : 12) + (isSel ? 18 : 14);
+      const key = `${n.id}${isSel ? '*' : ''}${count ? `+${count}` : ''}`;
+      const w = this.labelWidth.get(key) ?? labelEstimate(text, n.kind === 'area' ? 14 : 12) + (isSel ? 18 : 14);
       // 좌우: 라우터는 항상 오른쪽(원점이 화면 중심에 투영돼 부동소수점 오차로 판정이 뒤집히던 자리), 나머지는 중심선 데드밴드 안에서 직전 방향 유지
       const geo = n.kind === 'router' ? true : labelSide(c.x, this.width / 2 - this.offset.x, this.labelSide.get(n.id));
       const prevGeo = this.labelSide.get(n.id);
@@ -1126,9 +1135,10 @@ export class BrainScene {
       if (!el) { el = document.createElement('div'); this.labelLayer.appendChild(el); this.labels.push(el); }
       if (el.dataset.id !== n.id) {
         el.dataset.id = n.id;
-        el.textContent = n.title;
         el.className = `scene-label scene-label--${n.kind}`;
       }
+      if (el.textContent !== text) el.textContent = text;
+      el.classList.toggle('is-folded', !!count);
       el.classList.toggle('is-selected', isSel);
       el.classList.toggle('is-dim', !!emphasis && !emphasis.has(n.id) && n.kind !== 'router');
       el.style.transform = `translate(${Math.round(box.x)}px, ${Math.round(box.y)}px)`;

@@ -2,7 +2,7 @@
 // 단축키: / 검색, Esc 검색 닫기 → 선택 해제 → 시연 멈춤. 캔버스에서 화살표 회전 · +/− 확대 · 0 전체 보기.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, RefObject } from 'react';
-import { defaultExpanded, expandable, pathChildCount, revealPrimaryPath, shownEdges, toggleExpanded, visibleSet } from './core/explore';
+import { defaultExpanded, expandable, foldCounts, foldedVisible, pathChildCount, revealPrimaryPath, shownEdges, toggleExpanded, visibleSet } from './core/explore';
 import { areaEmphasis, buildGraph } from './core/graph';
 import type { BrainGraph } from './core/graph';
 import { radialLayout } from './core/layout2d';
@@ -97,6 +97,7 @@ export function App() {
   const dataset = useMemo(() => (NODES ? syntheticDataset(NODES) : realFiles ? { label: '실제 볼트(읽기 전용)', synthetic: false, files: realFiles } : demoDataset), [realFiles]);
   const graph = useMemo(() => buildGraph(dataset), [dataset]);
   const realMode = !!realFiles;
+  const foldMode = realMode && live?.structure === 'workspace';
   // 볼트가 바뀌거나 규칙 실패로 실제 데이터를 버리면, 열린 본문 · 검색 · 미리보기를 모두 새로 시작한다
   const dataKey = `${live?.mode ?? 'demo'}:${live?.vaultKey ?? ''}:${realMode ? 'real' : 'fallback'}`;
   const palette = useMemo(() => buildPalette(graph), [graph]);
@@ -133,7 +134,7 @@ export function App() {
   const [hover, setHover] = useState<string | null>(null);
   const [area, setArea] = useState<string | null>(null);
   const [view, setView] = useState<EdgeView>('all');
-  const [expanded, setExpanded] = useState<Set<string>>(() => defaultExpanded(graph));
+  const [expanded, setExpanded] = useState<Set<string>>(() => defaultExpanded(graph, foldMode));
   const [legendOpen, setLegendOpen] = useState(() => !matchMedia(MOBILE).matches && innerHeight > 620);
   const [paused, setPaused] = useState(false);
   // 장면 이름표(노드 글자) 켬/끔: 이 페이지 상태만. 3D · 2D 공통, 검색 · 범례 · 패널 글자와 접근성 이름은 그대로
@@ -170,6 +171,9 @@ export function App() {
   const doc = selected ? graph.byId.get(selected) ?? null : null;
   const emphasis = useMemo(() => (area ? areaEmphasis(graph, area) : null), [graph, area]);
   const visible = useMemo(() => visibleSet(graph, { expanded, view, pinned: selected }), [graph, expanded, view, selected]);
+  // 작업폴더 연결: 접힌 색인을 하위 개수를 단 덩어리로 보이고, 누르면 펼친다(색인 방식 · 데모는 이전처럼 모두 펼친 채 시작)
+  const counts = useMemo(() => (foldMode ? foldCounts(graph) : null), [graph, foldMode]);
+  const folded = useMemo(() => (counts ? foldedVisible(visible, expanded, counts) : undefined), [counts, visible, expanded]);
   const shown = useMemo(() => new Map<string, EdgeKind>(shownEdges(graph, { expanded, view, pinned: selected }, visible).map(e => [e.key, e.kind])), [graph, expanded, view, selected, visible]);
 
   const tourSteps = useMemo(() => {
@@ -259,8 +263,9 @@ export function App() {
     setSelected(cur => (cur && graph.byId.has(cur) ? cur : null));
     setArea(cur => (cur && graph.byId.has(cur) ? cur : null));
     setExpanded(old => {
-      const was = expandable(prev), now = expandable(graph), next = new Set<string>();
-      for (const id of now) if (old.has(id) || !was.has(id)) next.add(id);
+      // 새로 생긴 경로는 처음 상태 규칙을 따른다(작은 그래프 = 펼침, 큰 그래프 = 영역 색인만 펼침)
+      const was = expandable(prev), now = expandable(graph), fresh = defaultExpanded(graph, foldMode), next = new Set<string>();
+      for (const id of now) if (old.has(id) || (!was.has(id) && fresh.has(id))) next.add(id);
       return next;
     });
   }, [graph, stopTour]);
@@ -269,7 +274,7 @@ export function App() {
   useEffect(() => {
     setSelected(null); setPreview(null);
     if (firstKey.current) { firstKey.current = false; return; }
-    stopTour(); setHover(null); setArea(null); setView('all'); setExpanded(defaultExpanded(graph));
+    stopTour(); setHover(null); setArea(null); setView('all'); setExpanded(defaultExpanded(graph, foldMode));
   }, [dataKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 실제 자료 미리보기: 선택할 때만 불투명 ID로 읽는다(갱신되면 다시 읽음)
@@ -312,14 +317,31 @@ export function App() {
     });
   }, []);
 
+  // 덩어리를 눌러 펼친 직후의 두 번 누르기(dblclick)가 곧바로 다시 접지 않게, 방금 펼친 문서를 잠깐 기억한다
+  const clickOpened = useRef<{ id: string; at: number } | null>(null);
   const toggle = useCallback((id: string) => {
     if (!canExpand.has(id)) return;
+    const recent = clickOpened.current;
+    if (recent && recent.id === id && performance.now() - recent.at < 600) return;
     setExpanded(e => {
       const next = toggleExpanded(e, id);
       setAnnouncement(`${graph.byId.get(id)?.title} ${next.has(id) ? '펼침' : '접음'}`);
       return next;
     });
   }, [canExpand, graph]);
+
+  /** 장면에서 누르기: 접힌 덩어리는 펼치면서 고르고, 나머지(펼친 색인 · 자료)는 고르기만 한다 */
+  const pick = useCallback((id: string | null) => {
+    if (!id) { if (selected) close(); return; }
+    if (folded?.has(id)) {
+      clickOpened.current = { id, at: performance.now() };
+      setExpanded(e => new Set(e).add(id));
+      select(id);
+      setAnnouncement(`${graph.byId.get(id)?.title} 펼침 · 하위 ${folded.get(id)!.toLocaleString('ko-KR')}개`);
+      return;
+    }
+    select(id);
+  }, [folded, selected, close, select, graph]);
 
   // 자동 시연: 대표 영역 · 주제 · 문서를 차례로 방문. 직접 조작 · 검색 · 선택 · 정지 때 멈추고, 시연 단추로 다시 시작한다
   // 탭이 숨으면 남은 시간을 멈춰 두고, 돌아오면 같은 단계의 남은 시간부터 이어 간다(단계를 건너뛰지 않는다)
@@ -480,9 +502,9 @@ export function App() {
           <p className="stage__boot" role="status">문서 {graph.docs.length.toLocaleString('ko-KR')}개의 3D 자리를 계산하는 중…</p>
         ) : (
           <BrainCanvas ref={scene} viewKey={dataKey} graph={graph} palette={palette} positions={positions} visible={visible} shown={shown} emphasis={emphasis}
-            selected={selected} hover={hover} insets={insets} paused={paused} autoRotate={tour === null && !selected} reduced={reduced} opening={opening} showLabels={labelsOn}
+            selected={selected} hover={hover} folded={folded} insets={insets} paused={paused} autoRotate={tour === null && !selected} reduced={reduced} opening={opening} showLabels={labelsOn}
             hooks={{
-              onPick: id => (id ? select(id) : selected && close()),
+              onPick: pick,
               onDoublePick: id => toggle(id),
               onHover: id => setHover(id),
               onInteract: () => stopTour(),
@@ -529,7 +551,7 @@ export function App() {
         <button type="button" className="dock__button" onClick={() => { stopTour(); scene.current?.zoom(1.25); }} aria-label="확대" title="확대 (+)" disabled={!!fallback}><PlusIcon /></button>
         <button type="button" className="dock__button" onClick={() => { stopTour(); scene.current?.fit(); }} aria-label="전체 보기" title="전체 보기 (0)" disabled={!!fallback}><FitIcon /></button>
         <span className="dock__sep" aria-hidden="true" />
-        <button type="button" className="dock__button dock__button--text" onClick={() => { stopTour(); setExpanded(defaultExpanded(graph)); setAnnouncement('펼침을 처음 상태로'); }}
+        <button type="button" className="dock__button dock__button--text" onClick={() => { stopTour(); setExpanded(defaultExpanded(graph, foldMode)); setAnnouncement('펼침을 처음 상태로'); }}
           aria-label="펼침 초기화" title="모든 경로를 처음처럼 펼칩니다"><FoldIcon /><span className="dock__label" aria-hidden="true">펼침 초기화</span><span className="dock__label-short" aria-hidden="true">초기화</span></button>
         <button type="button" className="dock__button dock__button--text dock__button--labels" onClick={toggleLabels} aria-pressed={labelsOn}
           aria-label="장면 이름표" title={labelsOn ? '장면 이름표 끄기 (L)' : '장면 이름표 켜기 (L)'}>

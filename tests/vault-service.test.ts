@@ -36,6 +36,7 @@ test('설정 없음 = 데모, 설정 후 연결: 상태 · 그래프 응답에 �
     writeFileSync(settings, JSON.stringify({ vaultPath: fx.vault }));
     await svc.refresh();
     assert.equal(svc.status().state, 'connected');
+    assert.equal(svc.status().structure, 'indexed', '연결 방식(경로 아님)은 상태에 실린다');
     assert.deepEqual(clean(svc.status(), fx.base), []);
     assert.deepEqual(clean(svc.graph(), fx.base), []);
     writeFileSync(settings, JSON.stringify({ vaultPath: 'relative/vault' }));

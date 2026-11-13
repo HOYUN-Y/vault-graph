@@ -5,6 +5,8 @@ import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 export const LEDGER = '.secondbrain/private-paths.txt';
+export const POLICY_DIR = '.secondbrain';
+export const isPolicyPath = (rel: string) => rel === POLICY_DIR || rel.startsWith(POLICY_DIR + '/');
 // 비밀정보로 보이는 이름(파일 · 폴더 이름 기준). .key는 Keynote 문서라 넣지 않는다.
 export const SECRET_RE = /(^\.env|^env[._-]|(^|[._-])env(\.txt)?$|\.env$|keys?\.txt$|\.pem$|\.p12$|\.pfx$|\.keystore$|^id_(rsa|ed25519|ecdsa)|token|secret|credential|password|api[ _-]?keys?\b|\.ppk$|비밀번호|\.netrc$)/i;
 

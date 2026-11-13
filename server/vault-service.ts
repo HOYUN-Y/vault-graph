@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { watch as fsWatch, promises as fsp } from 'node:fs';
 import type { FSWatcher } from 'node:fs';
 import path from 'node:path';
-import { isPrivate, isSecretPath, makeRedactor } from './privacy';
+import { isPolicyPath, isPrivate, isSecretPath, makeRedactor } from './privacy';
 import { aliasesOf, empty, ioKind, loadPolicy, underPrivate, readSnapshot, rootReals, toPublic, withTimeout } from './vault-reader';
 import type { Snapshot } from './vault-reader';
 
@@ -17,17 +17,22 @@ export type PreviewState = 'ok' | 'changed' | 'gone' | 'private' | 'blocked' | '
   | 'denied' | 'read-error' | 'offline' | 'outside' | 'not-file' | 'too-large' | 'timeout' | 'not-text' | 'demo';
 export interface Preview { state: PreviewState; body?: string; bytes?: number }
 
-interface Settings { vaultPath: string | null; error: string | null }
+interface Settings { vaultPath: string | null; structure: 'indexed' | 'workspace'; routerPath: string; error: string | null }
+const defaults = { structure: 'indexed' as const, routerPath: 'CLAUDE.md' };
 
 async function readSettings(file: string): Promise<Settings> {
   let text: string;
-  try { text = await fsp.readFile(file, 'utf8'); } catch { return { vaultPath: null, error: null }; }
+  try { text = await fsp.readFile(file, 'utf8'); } catch { return { vaultPath: null, ...defaults, error: null }; }
   try {
-    const value = JSON.parse(text) as { vaultPath?: unknown };
-    if (typeof value.vaultPath !== 'string' || !value.vaultPath.trim()) return { vaultPath: null, error: null };
-    if (!path.isAbsolute(value.vaultPath)) return { vaultPath: null, error: 'settings.json의 vaultPath는 절대경로여야 합니다' };
-    return { vaultPath: path.normalize(value.vaultPath), error: null };
-  } catch { return { vaultPath: null, error: 'settings.json을 해석할 수 없습니다' }; }
+    const value = JSON.parse(text) as { vaultPath?: unknown; structure?: unknown; routerPath?: unknown };
+    if ((value.structure !== undefined && value.structure !== 'indexed' && value.structure !== 'workspace') || (value.routerPath !== undefined && (typeof value.routerPath !== 'string' || !value.routerPath || value.routerPath.includes('\\') || value.routerPath.startsWith('/') || /^[a-z][a-z0-9+.-]*:/i.test(value.routerPath) || value.routerPath.split('/').some(p => !p || p === '.' || p === '..')))) return { vaultPath: null, ...defaults, error: 'settings.json의 structure 또는 routerPath가 올바르지 않습니다' };
+    const structure = (value.structure ?? defaults.structure) as Settings['structure'];
+    const routerPath = ((value.routerPath ?? defaults.routerPath) as string).normalize('NFC');
+    if (value.vaultPath === undefined || (typeof value.vaultPath === 'string' && !value.vaultPath.trim())) return { vaultPath: null, ...defaults, error: null };
+    if (typeof value.vaultPath !== 'string') return { vaultPath: null, ...defaults, error: 'settings.json의 vaultPath가 올바르지 않습니다' };
+    if (!path.isAbsolute(value.vaultPath)) return { vaultPath: null, ...defaults, error: 'settings.json의 vaultPath는 절대경로여야 합니다' };
+    return { vaultPath: path.normalize(value.vaultPath), structure, routerPath, error: null };
+  } catch { return { vaultPath: null, ...defaults, error: 'settings.json을 해석할 수 없습니다' }; }
 }
 
 async function settingsPrint(file: string): Promise<string> {
@@ -44,7 +49,7 @@ export interface ServiceOptions {
 }
 
 export class VaultService {
-  private settings: Settings = { vaultPath: null, error: null };
+  private settings: Settings = { vaultPath: null, ...defaults, error: null };
   private published: Snapshot | null = null;
   private lastGood: Snapshot | null = null;
   private stale = false;
@@ -62,7 +67,7 @@ export class VaultService {
   constructor(private settingsFile: string, private opts: ServiceOptions = {}) {}
 
   /** 설정 · 볼트 식별값(경로를 드러내지 않는 해시): 바뀌면 화면은 이전 실제 데이터를 모두 버린다 */
-  private get vaultKey() { return this.settings.vaultPath ? createHash('sha256').update(this.settings.vaultPath).digest('hex').slice(0, 12) : null; }
+  private get vaultKey() { return this.settings.vaultPath ? createHash('sha256').update(JSON.stringify([this.settings.vaultPath, this.settings.structure, this.settings.routerPath])).digest('hex').slice(0, 12) : null; }
 
   async start() {
     await this.refresh();
@@ -102,12 +107,12 @@ export class VaultService {
     if (!vault) { this.publish(null); return; }
     const settingsAt = await settingsPrint(this.settingsFile);
     for (let attempt = 0; attempt < 3; attempt++) {
-      const snap = await readSnapshot(vault);
+      const snap = await readSnapshot(vault, this.settings.structure, this.settings.routerPath);
       await this.opts.beforePublish?.();
       if (gen !== this.generation) return; // 더 새로운 갱신이 시작됨
       // 게시 직전 확인: 설정이 바뀌었으면 처음부터 다시(볼트가 바뀌었을 수 있음), 정책이 바뀌었으면 다시 만든다
       if (await settingsPrint(this.settingsFile) !== settingsAt) { this.again = true; return; }
-      const now = await loadPolicy(vault);
+      const now = await loadPolicy(vault, this.settings.routerPath);
       if (now.print !== snap.policy) continue;
       this.publish(snap);
       return;
@@ -129,7 +134,7 @@ export class VaultService {
   private watchTargets(): string[] {
     const out = new Set<string>([path.dirname(this.settingsFile)]);
     const vault = this.settings.vaultPath;
-    if (vault) { out.add(vault); out.add(path.join(vault, '.secondbrain')); }
+    if (vault) { out.add(vault); out.add(path.join(vault, '.secondbrain')); for (const file of this.published?.watch ?? []) out.add(path.dirname(file)); }
     return [...out];
   }
 
@@ -150,7 +155,7 @@ export class VaultService {
 
   /** 주기 확인용 지문: 설정 · 라우터 · 장부 · 안내 문서 · 볼트 폴더의 수정 시각 · 크기 */
   private async fingerprint(): Promise<string> {
-    const files = [this.settingsFile, ...(this.settings.vaultPath ? [this.settings.vaultPath, path.join(this.settings.vaultPath, 'CLAUDE.md'), path.join(this.settings.vaultPath, '.secondbrain', 'private-paths.txt')] : []),
+    const files = [this.settingsFile, ...(this.settings.vaultPath ? [this.settings.vaultPath, path.join(this.settings.vaultPath, this.settings.routerPath), path.join(this.settings.vaultPath, '.secondbrain', 'private-paths.txt')] : []),
       ...(this.lastGood?.watch ?? this.published?.watch ?? [])];
     const parts = await Promise.all([...new Set(files)].map(async f => {
       const st = await withTimeout(fsp.stat(f).catch(() => null), 1500);
@@ -168,7 +173,7 @@ export class VaultService {
     const s = this.published;
     const mode = this.settings.vaultPath ? 'real' : 'demo';
     return {
-      mode, version: this.version, vaultKey: this.vaultKey,
+      mode, version: this.version, vaultKey: this.vaultKey, structure: this.settings.structure,
       state: this.settings.error ? 'invalid' : mode === 'demo' ? 'demo' : (s?.state ?? 'connecting'),
       reason: this.settings.error ?? s?.reason ?? null, stale: this.stale,
       updatedAt: this.updatedAt, checkedAt: this.checkedAt,
@@ -189,26 +194,28 @@ export class VaultService {
     const ref = this.published?.materials.get(id);
     if (!ref || this.published?.state === 'blocked') return { state: 'gone' };
     const settingsAt = await settingsPrint(this.settingsFile);
-    const policy = await loadPolicy(vault);
+    if (JSON.stringify(await readSettings(this.settingsFile)) !== JSON.stringify(this.settings)) { void this.refresh(); return { state: 'changed' }; }
+    const policy = await loadPolicy(vault, this.settings.routerPath);
     // 볼트 자체에 닿지 못함(끊김)은 'offline', 규칙을 확인할 수 없는 경우(차단 · 라우터 없음)는 본문을 열지 않는 'blocked'
     if (!policy.ok) { void this.refresh(); return { state: policy.state === 'unavailable' ? 'offline' : 'blocked' }; }
     const { priv, roots, vaultReal } = policy;
-    const hidden = (rel: string) => isPrivate(rel, priv) || isSecretPath(rel);
+    const hidden = (rel: string) => isPolicyPath(rel) || isPrivate(rel, priv) || isSecretPath(rel);
     if (hidden(ref.rel)) { void this.refresh(); return { state: 'private' }; }
     if (!PREVIEW_EXT.test(ref.rel)) return { state: 'unsupported' };
     const root = ref.rel.split('/')[0];
-    if (!roots.includes(root)) return { state: 'unregistered' };
+    if (this.settings.structure !== 'workspace' && !roots.includes(root)) return { state: 'unregistered' };
     const reals = await rootReals(vault, roots);
     const rootReal = reals.get(root);
-    if (!rootReal) return { state: 'root-unavailable' };
+    if (roots.includes(root) && !rootReal) return { state: 'root-unavailable' };
     // 입출력 실패는 종류별로: 없음(ENOENT · ENOTDIR)만 'missing', 권한은 'denied', 그 밖은 'read-error'(삭제로 단정하지 않음)
     let failed: PreviewState = 'missing';
     const fail = (e: unknown) => { const k = ioKind(e); failed = k === 'missing' ? 'missing' : k === 'denied' ? 'denied' : 'read-error'; return null; };
     const real = await withTimeout(fsp.realpath(path.join(vault, ref.rel)).catch(fail), PREVIEW_TIMEOUT);
     if (real === 'timeout') return { state: 'timeout' };
     if (!real) return { state: failed };
-    if (![...reals.values()].some(r => r && (real === r || real.startsWith(r + path.sep)))) return { state: 'outside' };
+    if (!(this.settings.structure === 'workspace' && (real === vaultReal || real.startsWith(vaultReal + path.sep))) && ![...reals.values()].some(r => r && (real === r || real.startsWith(r + path.sep)))) return { state: 'outside' };
     if (aliasesOf(real, reals, vaultReal).some(hidden) || underPrivate(real, policy.privReals)) { void this.refresh(); return { state: 'private' }; }
+    if (policy.print !== this.published?.policy) { void this.refresh(); return { state: 'changed' }; }
     const st = await withTimeout(fsp.stat(real).catch(fail), PREVIEW_TIMEOUT);
     if (st === 'timeout') return { state: 'timeout' };
     if (!st) return { state: failed };
@@ -222,7 +229,7 @@ export class VaultService {
     const body = makeRedactor(priv)(text);
     await this.opts.beforePreviewReturn?.();
     // 반환 직전 확인: 읽는 사이 설정 · 비공개 정책이 바뀌었거나 자료가 게시본에서 빠졌으면 이전 본문을 돌려주지 않는다
-    const latest = await loadPolicy(vault);
+    const latest = await loadPolicy(vault, this.settings.routerPath);
     if (await settingsPrint(this.settingsFile) !== settingsAt || latest.print !== policy.print || !this.published?.materials.has(id)) {
       void this.refresh();
       return { state: 'changed' };

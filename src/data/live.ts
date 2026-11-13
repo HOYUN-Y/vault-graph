@@ -8,6 +8,8 @@ export interface LiveStatus {
   version: number;
   /** 볼트 식별값(경로 아님). 바뀌면 이전 실제 데이터 · 열린 본문 · 검색을 모두 버린다 */
   vaultKey: string | null;
+  /** settings.json의 연결 방식: indexed(색인) · workspace(작업폴더). 작업폴더만 접힌 덩어리로 시작한다 */
+  structure?: 'indexed' | 'workspace';
   state: LiveState;
   reason: string | null;
   /** 볼트에 닿지 못해 마지막으로 검증한 화면을 보여 주는 중 */
@@ -59,7 +61,7 @@ export const PREVIEW_MESSAGE: Record<PreviewState, string> = {
   denied: '원문을 읽을 권한이 없습니다(파일 · 폴더 권한). 삭제로 판단하지 않습니다.',
   'read-error': '원문을 읽는 중 입출력 오류가 났습니다. 잠시 뒤 다시 선택해 주세요(삭제로 판단하지 않음).',
   offline: '볼트 연결이 끊겨 원문을 읽지 못했습니다. 다시 닿으면 자동으로 갱신합니다(삭제로 판단하지 않음).',
-  outside: '원문이 등록된 외부 폴더 밖을 가리켜(심볼릭 링크) 열지 않습니다.',
+  outside: '원문이 허용된 작업폴더와 등록 외부 폴더 밖을 가리켜 열지 않습니다.',
   'not-file': '폴더나 특수 파일이라 본문이 없습니다.',
   'too-large': '파일이 커서(512KB 초과) 미리보기를 생략했습니다.',
   timeout: '원문을 제때 읽지 못했습니다. 온라인 전용 파일이거나 드라이브가 느릴 수 있습니다.',

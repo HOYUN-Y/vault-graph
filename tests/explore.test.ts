@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { pairKey } from '../src/core/graph';
-import { defaultExpanded, revealPrimaryPath, shownEdges, toggleExpanded, visibleSet } from '../src/core/explore';
+import { defaultExpanded, expandable, foldCounts, foldedVisible, revealPrimaryPath, shownEdges, toggleExpanded, visibleSet } from '../src/core/explore';
+import { foldScale, labelText } from '../src/render/fold';
 import type { ExploreState } from '../src/core/explore';
 import { layoutGraph } from '../src/core/layout3d';
 import type { EdgeView } from '../src/core/types';
@@ -93,4 +94,28 @@ test('회귀: 자료 d가 자기 주 분류 색인 s를 다시 링크하고 열�
   // 영역 구조 보기에서는 주제 링크가 보기 밖이고 분류 소속은 접혀 있으므로 선이 없다
   const sv = state(toggleExpanded(defaultExpanded(h.g), h.id('s')), 'structure', h.id('d'));
   assert.ok(!shownEdges(h.g, sv, visibleSet(h.g, sv)).some(e => e.key === pairKey(h.id('s'), h.id('d'))));
+});
+
+test('덩어리 방식(작업폴더 연결)은 영역 색인만 펼친 채 시작하고, 기본(색인 방식 · 데모)은 모두 펼친다', () => {
+  assert.deepEqual(defaultExpanded(g), expandable(g));
+  const start = defaultExpanded(g, true);
+  assert.deepEqual(names(start), ['a1', 'a2']);
+  assert.deepEqual(names(visibleSet(g, state(start))), ['a1', 'a2', 'm', 'r', 's1', 's2'], '영역 아래 하위 색인 · MOC까지만 보인다');
+});
+
+test('접힌 개수: 영역은 주 분류 자손 전체, MOC는 바로 아래 주제 링크 수. 보이면서 접힌 것만 덩어리가 된다', () => {
+  const counts = foldCounts(g);
+  assert.equal(counts.get(id('a1')), 3, 'a1 → s1 → x · y');
+  assert.equal(counts.get(id('s1')), 2);
+  assert.equal(counts.get(id('m')), 1, 'MOC는 주 분류 하위가 없어도 연결 수');
+  const s = state(new Set([id('a1')]));
+  const folded = foldedVisible(visibleSet(g, s), s.expanded, counts);
+  assert.deepEqual(names(new Set(folded.keys())), ['a2', 'm', 's1'], '펼친 a1 · 보이지 않는 s2는 빠진다');
+});
+
+test('덩어리 크기 · 이름표: 하위가 많을수록 크되 상한이 있고, 이름표에 +개수가 붙는다', () => {
+  assert.ok(foldScale(10) > 1 && foldScale(1000) > foldScale(10));
+  assert.equal(foldScale(1e9), 2.4);
+  assert.equal(labelText('업무 색인', 1240), '업무 색인 +1,240');
+  assert.equal(labelText('업무 색인', undefined), '업무 색인');
 });

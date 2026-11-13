@@ -38,6 +38,8 @@ interface Props {
   emphasis: ReadonlySet<string> | null;
   selected: string | null;
   hover: string | null;
+  /** 접힌 덩어리(큰 그래프만): 보이지만 접힌 색인 → 하위 개수 */
+  folded?: ReadonlyMap<string, number>;
   insets: Insets;
   paused: boolean;
   autoRotate: boolean;
@@ -61,7 +63,7 @@ function brainStarts(graph: BrainGraph, positions: Map<string, Vec3>): Vec3[] {
 }
 
 export const BrainCanvas = forwardRef<BrainCanvasHandle, Props>(function BrainCanvas(props, ref) {
-  const { graph, palette, positions, visible, shown, emphasis, selected, hover, insets, paused, autoRotate, reduced, opening, showLabels, hooks } = props;
+  const { graph, palette, positions, visible, shown, emphasis, selected, hover, folded, insets, paused, autoRotate, reduced, opening, showLabels, hooks } = props;
   const canvas = useRef<HTMLCanvasElement>(null);
   const labels = useRef<HTMLDivElement>(null);
   const scene = useRef<BrainScene | null>(null);
@@ -69,8 +71,8 @@ export const BrainCanvas = forwardRef<BrainCanvasHandle, Props>(function BrainCa
   latest.current = hooks;
   // 장면을 만들 때 쓰는 초기값(가장 최근 값). 개발 모드에서 장면을 다시 만들어도 오프닝이 끝나기 전이면 다시 보인다
   // 데이터 갱신으로 장면을 다시 만들 때도 지금 상태(회전 여부 · 여백 · 보이는 문서 · 선택)를 그대로 넘긴다
-  const init = useRef({ paused, reduced, opening, autoRotate, insets, showLabels, view: { visible, shown, emphasis, selected, hover } });
-  init.current = { paused, reduced, opening, autoRotate, insets, showLabels, view: { visible, shown, emphasis, selected, hover } };
+  const init = useRef({ paused, reduced, opening, autoRotate, insets, showLabels, view: { visible, shown, emphasis, selected, hover, folded } });
+  init.current = { paused, reduced, opening, autoRotate, insets, showLabels, view: { visible, shown, emphasis, selected, hover, folded } };
   const lastView = useRef<{ pos: number[]; target: number[] } | null>(null);
   const lastPositions = useRef<Map<string, Vec3> | null>(null);
   // 카메라 보존 범위: 같은 데이터 출처의 갱신만. 출처가 바뀌면(viewKey) 기본 전체 구도로 시작한다
@@ -112,7 +114,7 @@ export const BrainCanvas = forwardRef<BrainCanvasHandle, Props>(function BrainCa
     return () => { lastView.current = s.getView(); lastPositions.current = s.positions(); s.dispose(); scene.current = null; };
   }, [graph, palette, positions, starts, dust, props.viewKey]);
 
-  useEffect(() => { scene.current?.setState({ visible, shown, emphasis, selected, hover }); }, [visible, shown, emphasis, selected, hover]);
+  useEffect(() => { scene.current?.setState({ visible, shown, emphasis, selected, hover, folded }); }, [visible, shown, emphasis, selected, hover, folded]);
   useEffect(() => { scene.current?.setInsets(insets); }, [insets.top, insets.right, insets.bottom, insets.left, insets.corner?.w, insets.corner?.h]);
   useEffect(() => { scene.current?.setPaused(paused); }, [paused]);
   useEffect(() => { scene.current?.setAutoRotate(autoRotate); }, [autoRotate]);

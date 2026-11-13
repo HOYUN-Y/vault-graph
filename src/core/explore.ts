@@ -4,6 +4,7 @@
 // - 접기는 그 경로만 접는다: 다른 펼친 경로로 닿는 공유 자료는 남고, 접은 문서에서 나가는 경로 선만 감춘다.
 // - 검색 선택은 주 소속 경로(분류 소속)만 펼친다. 여러 MOC가 연결해도 임의 경로를 열지 않는다.
 // - 자리는 바꾸지 않는다(layout3d가 한 번 정한 자리).
+// - 작업폴더 연결(덩어리 방식)은 영역 색인만 펼친 채 시작하고, 접힌 색인은 하위 개수를 단 덩어리로 보인다. 덩어리를 누르면 펼친다(App).
 import type { BrainGraph, Relation } from './graph';
 import { mergeEdges, primaryPath } from './graph';
 import type { Edge, EdgeView } from './types';
@@ -26,8 +27,39 @@ export function expandable(g: BrainGraph): Set<string> {
   return out;
 }
 
-/** 처음 상태: 모두 펼침(큰 신경망이 먼저 보이게) */
-export const defaultExpanded = (g: BrainGraph) => expandable(g);
+/**
+ * 처음 상태. 색인 방식 · 데모: 모두 펼침(큰 신경망이 먼저 보이게).
+ * 덩어리 방식(작업폴더 연결, fold): 영역 색인만 펼치고 나머지 색인은 하위 개수를 단 덩어리로 접어 둔다.
+ */
+export function defaultExpanded(g: BrainGraph, fold = false): Set<string> {
+  const all = expandable(g);
+  if (!fold) return all;
+  return new Set(g.areas.map(a => a.id).filter(id => all.has(id)));
+}
+
+/** 접혀 있을 때 덩어리에 다는 개수: 주 분류 하위 전체(자손) 수와 바로 아래 경로 하위 수 중 큰 값(MOC는 주 분류 하위가 거의 없다) */
+export function foldCounts(g: BrainGraph): Map<string, number> {
+  const below = new Map<string, number>();
+  const subtree = (id: string): number => {
+    const known = below.get(id);
+    if (known !== undefined) return known;
+    below.set(id, 0); // 순환 방지
+    let n = 0;
+    for (const c of g.children.get(id) ?? []) n += 1 + subtree(c.id);
+    below.set(id, n);
+    return n;
+  };
+  const out = new Map<string, number>();
+  for (const id of expandable(g)) out.set(id, Math.max(subtree(id), pathChildCount(g, id, 'all')));
+  return out;
+}
+
+/** 보이지만 접혀 있는 문서 → 접힌 개수(장면이 덩어리 크기 · 이름표 개수로 쓴다) */
+export function foldedVisible(visible: ReadonlySet<string>, expanded: ReadonlySet<string>, counts: ReadonlyMap<string, number>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [id, n] of counts) if (n > 0 && visible.has(id) && !expanded.has(id)) out.set(id, n);
+  return out;
+}
 
 export interface ExploreState { expanded: ReadonlySet<string>; view: EdgeView; pinned: string | null }
 

@@ -97,7 +97,7 @@ export function directions(g: BrainGraph): { dirs: Map<string, Vec3>; anchors: M
   return { dirs, anchors };
 }
 
-interface Point { dir: Vec3; depth: number; group: string; hub: boolean; weight: number }
+interface Point { dir: Vec3; depth: number; group: string; hub: boolean; weight: number; areaRoot?: boolean }
 interface Link { a: number; b: number; kind: 'primary' | 'link' }
 
 // 길이는 모두 간격 s(단위 공을 N개로 나눈 간격) 배수. 원본 NEURAL 값(실제 사본 1,313개에서 고른 값)에서
@@ -160,11 +160,13 @@ export function neuralLayout(points: Point[], links: Link[], anchors: Map<string
   }
   for (let it = 0; it < iterations; it++) {
     const heat = 1 - it / iterations;
+    let radiusSquared = 0;
     let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
     for (let i = 0; i < N; i++) {
       const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2];
       if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z;
       const r = Math.hypot(x, y, z);
+      radiusSquared += r * r;
       F[i * 3] = NEURAL.hold * (D[i * 3] * r - x) - NEURAL.gravity * x;
       F[i * 3 + 1] = NEURAL.hold * (D[i * 3 + 1] * r - y) - NEURAL.gravity * y;
       F[i * 3 + 2] = NEURAL.hold * (D[i * 3 + 2] * r - z) - NEURAL.gravity * z;
@@ -210,6 +212,12 @@ export function neuralLayout(points: Point[], links: Link[], anchors: Map<string
       if (m > lim) { const k = lim / m; vx *= k; vy *= k; vz *= k; }
       V[i] = vx; V[i + 1] = vy; V[i + 2] = vz;
       P[i] += vx; P[i + 1] += vy; P[i + 2] += vz;
+      // 영역 핵은 매 반복 기준 광선 위에서만 이동해 하위 군집도 같은 경계를 보며 수렴한다.
+      if (points[i / 3].areaRoot) {
+        const radius = Math.max(NEURAL.trunk * s * 0.5, Math.sqrt(radiusSquared / N) * 0.5, Math.hypot(P[i], P[i + 1], P[i + 2]));
+        const speed = V[i] * D[i] + V[i + 1] * D[i + 1] + V[i + 2] * D[i + 2];
+        for (let axis = 0; axis < 3; axis++) { P[i + axis] = D[i + axis] * radius; V[i + axis] = D[i + axis] * speed; }
+      }
     }
   }
   const radii = points.map((_, i) => Math.hypot(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]));
@@ -239,7 +247,7 @@ export function layoutGraph(g: BrainGraph, iterations?: number): Map<string, Vec
   const points: Point[] = planet.map(d => ({
     dir: dirs.get(d.id) ?? [0, 1, 0], depth: g.depth.get(d.id) || 1,
     group: d.kind === 'moc' ? d.id : g.areaOf.get(d.id) ?? d.id,
-    hub: d.kind !== 'material', weight: count(d.id)
+    hub: d.kind !== 'material', weight: count(d.id), areaRoot: d.kind === 'area'
   }));
   const links: Link[] = [];
   const seen = new Set<string>();

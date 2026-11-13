@@ -85,7 +85,7 @@ export function buildGraph(dataset: Dataset): BrainGraph {
   const docs = vault.docs;
   const byId = new Map(docs.map(d => [d.id, d]));
   const routers = docs.filter(d => d.kind === 'router');
-  if (routers.length !== 1) problems.push(`라우터(CLAUDE.md)는 하나여야 합니다(현재 ${routers.length}개)`);
+  if (routers.length !== 1) problems.push(`라우터는 하나여야 합니다(현재 ${routers.length}개)`);
   const routerId = routers[0]?.id ?? '';
 
   const children = new Map<string, BrainDoc[]>();
