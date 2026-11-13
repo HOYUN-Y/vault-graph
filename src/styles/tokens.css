@@ -1,6 +1,6 @@
-/* Artificial Insight 테마(insight-design-theme) Terminal 스타일 토큰. 값은 스킬 assets/web/base.css의 :root와 같다.
-   글꼴은 public/fonts에 자체 제공한다(CDN 없음, 라이선스: public/fonts/licenses/OFL-*.txt).
-   모션 값은 motion-web-builder 기본 스케일에서 골랐다. */
+/* Artificial Insight theme (insight-design-theme) Terminal style tokens. Values match :root in the skill's assets/web/base.css.
+   Fonts are self-hosted in public/fonts (no CDN; licenses: public/fonts/licenses/OFL-*.txt).
+   Motion values come from the motion-web-builder default scale. */
 @font-face { font-family: 'Pretendard'; src: url('/fonts/Pretendard-Regular.woff2') format('woff2'); font-weight: 400; font-display: swap; }
 @font-face { font-family: 'Pretendard'; src: url('/fonts/Pretendard-Medium.woff2') format('woff2'); font-weight: 500; font-display: swap; }
 @font-face { font-family: 'Pretendard'; src: url('/fonts/Pretendard-Bold.woff2') format('woff2'); font-weight: 600 700; font-display: swap; }
@@ -8,7 +8,7 @@
 @font-face { font-family: 'JetBrains Mono'; src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2'); font-weight: 400 500; font-display: swap; }
 @font-face { font-family: 'JetBrains Mono'; src: url('/fonts/JetBrainsMono-SemiBold.woff2') format('woff2'); font-weight: 600; font-display: swap; }
 @font-face { font-family: 'JetBrains Mono'; src: url('/fonts/JetBrainsMono-Bold.woff2') format('woff2'); font-weight: 700 800; font-display: swap; }
-/* 짧은 제목용 한글 픽셀 글꼴: 굵기는 400 하나(가짜 굵게 방지) */
+/* Korean pixel font for short titles: weight 400 only (prevents faux bold) */
 @font-face { font-family: 'NeoDunggeunmo Pro'; src: url('/fonts/NeoDunggeunmoPro-Regular.woff2') format('woff2'); font-weight: 400; font-display: swap; }
 
 :root {
@@ -17,12 +17,12 @@
   --navy-800: #162033;
   --navy-700: #1F2B42;
   --navy-600: #2B3A56;
-  --slate-500: #64748B; /* 픽셀 음영 전용(글자에 쓰지 않음) */
+  --slate-500: #64748B; /* pixel shading only (not for text) */
   --slate-400: #94A3B8;
   --slate-300: #CBD5E1;
   --slate-200: #E2E8F0;
   --ivory: #F6F1E7;
-  --gold: #FFB52E; /* 한 화면에 한 곳 */
+  --gold: #FFB52E; /* one place per screen */
 
   --bg: var(--navy-800);
   --bg-deep: var(--navy-950);

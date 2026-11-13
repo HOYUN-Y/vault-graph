@@ -1,22 +1,22 @@
-# 의존성 · 빌드 결과
+# Dependencies · build output
 node_modules/
 dist/
 *.tsbuildinfo
 
-# 로컬 검증 산출물(화면 캡처 등)
+# Local verification artifacts (screenshots etc.)
 captures/
 
-# 실제 자료 연결 경로 · 개인 설정(추적하지 않음)
+# Real material link paths · personal settings (not tracked)
 .local/
 *.local
 .env
 .env.*
 
-# 운영체제 · 편집기
+# OS · editor
 .DS_Store
 .vscode/
 .idea/
 npm-debug.log*
 
-# 로컬 볼트 설정(실제 절대경로가 들어가므로 추적하지 않음). 예시는 settings.example.json
+# Local vault settings (contain a real absolute path, so not tracked). See settings.example.json for an example
 /settings.json

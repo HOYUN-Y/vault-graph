@@ -1,4 +1,4 @@
-// 빠른 검색: 제목 · 경로 · 설명 · 본문. 모든 검색어가 들어 있는 문서만 찾고, 가장 앞선 칸 기준으로 순위를 정한다.
+// Quick search: title · path · summary · body. Matches only documents containing every term, ranked by the earliest field matched.
 import type { BrainDoc } from './types';
 import { stripLinks } from './markdown';
 

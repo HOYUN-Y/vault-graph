@@ -1,3 +1,5 @@
 {
-  "vaultPath": ""
+  "vaultPath": "",
+  "structure": "indexed",
+  "routerPath": "CLAUDE.md"
 }
