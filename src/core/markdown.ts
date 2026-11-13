@@ -1,26 +1,26 @@
-// 본문의 표준 Markdown 링크 [이름](상대경로) 읽기 — 해석 규칙은 이 파일 하나만 쓴다(그래프 연결 · 본문 표시 · 검색 변환).
-// secondbrain-index-sync 스킬의 링크 형식: 상대경로는 그 링크를 쓴 문서 위치를 기준으로 한다.
-// 링크로 읽지 않는 것: 펜스 코드 블록(``` · ~~~) 안, 인라인 코드(`…`) 안, 역슬래시로 이스케이프한 \[…](…), 이미지 ![…](…).
-// 이런 표기는 설명용 예시이므로 원문 그대로 둔다.
+// Reads standard Markdown links [label](relative path) in bodies. This file is the only parser (graph links, body display, search text).
+// secondbrain-index-sync link format: relative paths are relative to the document that contains the link.
+// Not links: inside fenced code (``` or ~~~), inside inline code (`...`), backslash-escaped \[...](...), images ![...](...).
+// Those are illustrative examples and are kept verbatim.
 
 export interface MdLink {
   label: string;
-  /** 괄호 안 원문 그대로(꺾쇠 · 인코딩 포함) */
+  /** Raw text inside the parentheses (angle brackets and encoding kept) */
   href: string;
-  /** 원문에서의 시작 위치와 길이 */
+  /** Start offset and length in the source text */
   index: number;
   length: number;
 }
 
 export type BodyPart = { type: 'text'; text: string } | { type: 'link'; link: MdLink };
 
-// [이름](주소 "제목"): 이름은 한 줄, 주소는 <꺾쇠 안 공백 허용> 또는 공백 없는 문자열(괄호 한 겹 허용)
+// [label](href "title"): label on one line; href is <angle brackets, spaces allowed> or a string without spaces (one level of parentheses)
 const LINK = /(!?)\[([^\[\]\n]*)\]\(\s*(<[^<>\n]*>|(?:[^\s()<>]|\([^\s()]*\))*)(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g;
 const FENCE = /^ {0,3}(`{3,}|~{3,})[^\n]*$/gm;
-// 인라인 코드: 같은 길이의 백틱으로 닫히는 구간. 여러 줄에 걸칠 수 있지만 빈 줄(문단 경계)은 넘지 않는다
+// Inline code: closed by a backtick run of the same length. May span lines but never a blank line (paragraph break)
 const INLINE = /(`+)(?!`)((?:(?!\n[ \t]*\n)[\s\S])+?)(?<!`)\1(?!`)/g;
 
-/** 링크로 해석하지 않는 구간 [시작, 끝) */
+/** Ranges not parsed as links [start, end) */
 export function literalRanges(text: string): [number, number][] {
   const ranges: [number, number][] = [];
   let open: { start: number; char: string; len: number } | null = null;
@@ -58,7 +58,7 @@ export function parseLinks(text: string): MdLink[] {
   return out;
 }
 
-/** 화면에 그릴 때: 일반 텍스트(코드 · 예시 포함 원문 그대로)와 실제 링크 조각으로 나눈다 */
+/** For rendering: split into plain text (code and examples verbatim) and real link parts */
 export function splitBody(text: string): BodyPart[] {
   const parts: BodyPart[] = [];
   let at = 0;
@@ -71,7 +71,7 @@ export function splitBody(text: string): BodyPart[] {
   return parts;
 }
 
-/** 검색 · 발췌용: 실제 링크만 표시 이름으로 바꾸고, 코드 · 예시는 원문대로 둔다 */
+/** For search and excerpts: replace real links with their labels, keep code and examples verbatim */
 export function stripLinks(text: string): string {
   return splitBody(text).map(p => (p.type === 'text' ? p.text : p.link.label)).join('');
 }
@@ -82,7 +82,7 @@ export type HrefTarget =
   | { type: 'anchor' }
   | { type: 'invalid'; reason: string };
 
-/** 볼트 기준 경로 정규화: NFC, 빈 조각 · '.' 제거, '..' 처리. 볼트 밖으로 나가면 null */
+/** Normalize a vault-relative path: NFC, drop empty and '.' segments, resolve '..'. null if it leaves the vault */
 export function normalizePath(path: string): string | null {
   const out: string[] = [];
   for (const seg of path.normalize('NFC').split('/')) {
@@ -96,9 +96,9 @@ export function normalizePath(path: string): string | null {
 const dirOf = (path: string) => path.split('/').slice(0, -1).join('/');
 
 /**
- * 링크 주소 → 볼트 기준 정규 경로. 기준은 링크를 쓴 문서(from)의 위치다.
- * 꺾쇠 · 퍼센트 인코딩(공백 · 한글) · 앵커(#) · 질의(?)를 처리하고, 외부 주소와 같은 문서 앵커는 관계로 보지 않는다.
- * 절대 경로 · 역슬래시 · 볼트 밖으로 나가는 경로 · 잘못된 인코딩은 깨진 링크로 보고한다.
+ * Link href -> canonical vault-relative path, relative to the linking document (from).
+ * Handles angle brackets, percent-encoding (spaces, non-ASCII), anchors (#) and queries (?). External URLs and same-document anchors are not relations.
+ * Absolute paths, backslashes, paths leaving the vault and bad encoding are reported as broken links.
  */
 export function resolveHref(from: string, href: string): HrefTarget {
   let raw = href.trim();
@@ -110,16 +110,16 @@ export function resolveHref(from: string, href: string): HrefTarget {
   const query = raw.indexOf('?');
   if (query >= 0) raw = raw.slice(0, query);
   if (!raw) return { type: 'anchor' };
-  try { raw = decodeURIComponent(raw); } catch { return { type: 'invalid', reason: '잘못된 인코딩' }; }
-  if (raw.startsWith('/')) return { type: 'invalid', reason: '절대 경로' };
-  if (raw.includes('\\')) return { type: 'invalid', reason: '역슬래시 경로' };
+  try { raw = decodeURIComponent(raw); } catch { return { type: 'invalid', reason: 'invalid encoding' }; }
+  if (raw.startsWith('/')) return { type: 'invalid', reason: 'absolute path' };
+  if (raw.includes('\\')) return { type: 'invalid', reason: 'backslash path' };
   const base = dirOf(from.normalize('NFC'));
   const path = normalizePath(base ? `${base}/${raw}` : raw);
-  if (path === null) return { type: 'invalid', reason: '볼트 밖 경로' };
+  if (path === null) return { type: 'invalid', reason: 'outside vault' };
   return { type: 'path', path, anchor };
 }
 
-/** 문서 위치 from에서 to로 가는 상대경로(색인 · 데모 작성용). 공백 · 괄호 · % · #만 인코딩하고 한글은 그대로 둔다 */
+/** Relative path from document from to to (for writing indexes and demos). Encodes only spaces, parentheses, %, # and <>; non-ASCII is kept */
 export function relativeHref(from: string, to: string): string {
   const a = dirOf(from).split('/').filter(Boolean), b = to.split('/');
   let i = 0;

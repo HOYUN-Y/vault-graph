@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "세컨드 브레인 신경망 시각화 데모 (로컬 전용, 합성 데모 데이터)",
+  "description": "Second brain neural network visualization demo (local only, synthetic demo data)",
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },

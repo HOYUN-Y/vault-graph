@@ -1,5 +1,5 @@
-// 3D 배치 작업자: 큰 그래프(수천 문서)의 배치 계산(수 초)을 화면 스레드 밖에서 한다.
-// 같은 데이터면 화면 스레드와 같은 그래프 · 같은 자리를 만든다(buildGraph · layoutGraph 모두 결정적이다).
+// 3D layout worker: runs the layout of large graphs (thousands of documents, several seconds) off the main thread.
+// Same data gives the same graph and positions as the main thread (buildGraph and layoutGraph are deterministic).
 import { buildGraph } from '../core/graph';
 import { layoutGraph } from '../core/layout3d';
 import type { Dataset } from '../core/types';

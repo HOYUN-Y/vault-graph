@@ -4,17 +4,17 @@ import { buildGraph } from '../src/core/graph';
 import { directions, layoutGraph } from '../src/core/layout3d';
 import type { VaultFile } from '../src/core/vault';
 
-test('불균형 영역도 계산 중 기준 방향을 유지하며 분류와 MOC는 보존한다', () => {
+test('unbalanced areas keep their base directions during layout, and primary parents and MOCs are preserved', () => {
   for (const areas of [1, 4, 7]) {
     const file = (path: string, kind: VaultFile['kind'], body: string): VaultFile => ({ path, kind, body, title: path, summary: '', updated: '' });
-    const files = [file('router.md', 'router', Array.from({ length: areas }, (_, i) => `[영역](a${i}.md)`).join('\n') + '\n[주제](moc.md)')];
+    const files = [file('router.md', 'router', Array.from({ length: areas }, (_, i) => `[area](a${i}.md)`).join('\n') + '\n[topic](moc.md)')];
     for (let i = 0; i < areas; i++) {
       const n = i === 0 ? 160 : 10;
-      files.push(file(`a${i}.md`, 'area', (areas > 1 ? `[교차](a${(i + 1) % areas}.md)\n` : '') + Array.from({ length: n }, (_, j) => `[자료](d${i}-${j}.md)`).join('\n')));
+      files.push(file(`a${i}.md`, 'area', (areas > 1 ? `[cross](a${(i + 1) % areas}.md)\n` : '') + Array.from({ length: n }, (_, j) => `[material](d${i}-${j}.md)`).join('\n')));
       for (let j = 0; j < n; j++) files.push(file(`d${i}-${j}.md`, 'material', ''));
     }
-    files.push(file('moc.md', 'moc', '[공유](d0-0.md)\n[영역](a0.md)'));
-    const g = buildGraph({ label: '합성 편중', synthetic: true, files });
+    files.push(file('moc.md', 'moc', '[shared](d0-0.md)\n[area](a0.md)'));
+    const g = buildGraph({ label: 'Synthetic skew', synthetic: true, files });
     const before = JSON.stringify([g.docs, g.relations]);
     const a = layoutGraph(g), b = layoutGraph(g);
     assert.deepEqual(a, b);

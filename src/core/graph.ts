@@ -1,11 +1,11 @@
-// 가상 볼트 파일 → 탐색 그래프. 관계는 본문의 표준 Markdown 링크 [이름](상대경로)에서만 나온다(markdown.ts · vault.ts 규칙).
-// 주 분류(parent)는 색인 링크로 정한 논리 상위이며 디스크 폴더가 아니다.
+// Virtual vault files → navigation graph. Relations come only from standard Markdown links [name](relative path) in bodies (markdown.ts · vault.ts rules).
+// The primary parent is a logical parent set by index links, not a disk folder.
 //
-// 두 층을 나눈다.
-//   1) 관계(relations): 방향 · 종류가 있는 원자료. A→B 색인 연결과 B→A 주제 연결은 서로 다른 관계로 모두 남는다.
-//      영역 필터 · 상세 패널 · 연결 보기 판정은 이 층을 쓴다.
-//   2) 화면 선(edges): 연결 보기마다 그 보기에 해당하는 관계만 골라 같은 쌍을 선 하나로 합친다(그리기 전용).
-// 같은 자료를 여러 색인 · MOC가 연결해도 노드는 하나다.
+// Two layers:
+//   1) relations: directed, typed raw data. An A→B index link and a B→A topic link both stay as separate relations.
+//      Area filter, detail panel and link-view checks use this layer.
+//   2) edges: per link view, keep only the matching relations and merge each pair into one line (drawing only).
+// A material linked by several indexes or MOCs is still one node.
 import { INDEX_KINDS } from './types';
 import type { BrainDoc, Dataset, Edge, EdgeKind, EdgeView } from './types';
 import { resolveHref } from './markdown';
@@ -15,7 +15,7 @@ export interface Relation {
   source: string;
   target: string;
   kind: EdgeKind;
-  /** 주 분류 링크에서 나온 관계(주 분류 색인 → 문서) */
+  /** Relation from the primary link (primary index → document) */
   parent: boolean;
 }
 
@@ -25,30 +25,30 @@ export interface BrainGraph {
   docs: BrainDoc[];
   byId: Map<string, BrainDoc>;
   routerId: string;
-  /** 주 분류 기준 하위 문서(종류 · 제목 순) */
+  /** Children by primary parent (sorted by kind, then title) */
   children: Map<string, BrainDoc[]>;
-  /** 방향 · 종류가 있는 관계(같은 방향 · 같은 종류만 중복 제거) */
+  /** Directed, typed relations (deduplicated only for same direction and kind) */
   relations: Relation[];
   relOut: Map<string, Relation[]>;
   relIn: Map<string, Relation[]>;
-  /** 전체 보기의 화면 선(쌍마다 하나) */
+  /** Edges of the full view (one per pair) */
   edges: Edge[];
   edgeByKey: Map<string, Edge>;
-  /** 본문 링크(방향 있음, 같은 방향 중복 제거) */
+  /** Body links (directed, same-direction duplicates removed) */
   outLinks: Map<string, string[]>;
   inLinks: Map<string, string[]>;
-  /** 주 소속 영역(영역 색인 id). 라우터 · MOC는 null */
+  /** Primary area (area index id). null for the router and MOCs */
   areaOf: Map<string, string | null>;
   depth: Map<string, number>;
   areas: BrainDoc[];
   mocs: BrainDoc[];
-  /** 정규 경로(NFC) → 고유 ID */
+  /** Normalized path (NFC) → unique ID */
   idOfPath: Map<string, string>;
-  /** 라우터의 외부 자료 폴더 표에서 찾은 src-* 루트(가상) */
+  /** src-* roots found in the router's external source folder table (virtual) */
   sourceRoots: string[];
-  /** 구조 문제(같은 경로 중복 · 끊긴 링크 · 닿지 않는 문서 등). 비어 있어야 정상 */
+  /** Structural problems (duplicate paths, broken links, unreachable documents, etc.). Should be empty */
   problems: string[];
-  /** 보기별 화면 선 캐시 */
+  /** Per-view edge cache */
   viewEdges: Map<EdgeView, Edge[]>;
 }
 
@@ -64,7 +64,7 @@ const VIEW_KINDS: Record<EdgeView, ReadonlySet<EdgeKind>> = {
   topic: new Set<EdgeKind>(['topic'])
 };
 
-/** 관계 → 화면 선: 보기에 해당하는 관계만 골라 같은 쌍을 하나로 합친다. 대표 종류는 분류 소속 > 색인 > 주제 순 */
+/** Relations → edges: keep relations in the view and merge each pair. Representative kind: primary > index > topic */
 export function mergeEdges(relations: Relation[], view: EdgeView): Edge[] {
   const kinds = VIEW_KINDS[view];
   const byKey = new Map<string, Edge>();
@@ -85,7 +85,7 @@ export function buildGraph(dataset: Dataset): BrainGraph {
   const docs = vault.docs;
   const byId = new Map(docs.map(d => [d.id, d]));
   const routers = docs.filter(d => d.kind === 'router');
-  if (routers.length !== 1) problems.push(`라우터는 하나여야 합니다(현재 ${routers.length}개)`);
+  if (routers.length !== 1) problems.push(`There must be exactly one router (found ${routers.length})`);
   const routerId = routers[0]?.id ?? '';
 
   const children = new Map<string, BrainDoc[]>();
@@ -97,13 +97,13 @@ export function buildGraph(dataset: Dataset): BrainGraph {
   }
   for (const list of children.values()) list.sort(byKindThenTitle);
 
-  // 깊이 · 주 소속 영역: 상위를 따라 올라간다(순환이면 멈추고 보고)
+  // Depth and primary area: walk up the parents (stop and report on a cycle)
   const depth = new Map<string, number>(), areaOf = new Map<string, string | null>();
   for (const doc of docs) {
     const seen = new Set<string>();
     let d = 0, area: string | null = null, cur: BrainDoc | undefined = doc;
     while (cur) {
-      if (seen.has(cur.id)) { problems.push(`상위 순환: ${doc.id}`); break; }
+      if (seen.has(cur.id)) { problems.push(`Parent cycle: ${doc.id}`); break; }
       seen.add(cur.id);
       if (cur.kind === 'area' && area === null) area = cur.id;
       if (cur.parent === null) break;
@@ -114,15 +114,15 @@ export function buildGraph(dataset: Dataset): BrainGraph {
     areaOf.set(doc.id, area);
   }
 
-  // 본문 링크(어댑터가 정규 경로 → ID로 바꾼 것)
+  // Body links (the adapter already mapped normalized paths → IDs)
   const outLinks = new Map<string, string[]>(), inLinks = new Map<string, string[]>();
   for (const [source, targets] of vault.links) {
     outLinks.set(source, targets);
     for (const t of targets) inLinks.set(t, [...(inLinks.get(t) ?? []), source]);
   }
 
-  // 관계: 주 분류(주 분류 색인 → 문서) + 그 밖의 본문 링크(링크한 문서의 종류로 색인 · 주제 구분).
-  // 주 분류를 정한 링크 자체는 분류 소속 관계 하나로만 남긴다. MOC 쪽 분류(라우터 → MOC, MOC → 문서)는 주제 연결이다.
+  // Relations: primary (primary index → document) + other body links (index vs topic by the linking document's kind).
+  // The link that set the primary parent stays only as one primary relation. MOC-side parents (router → MOC, MOC → document) are topic links.
   const relations: Relation[] = [];
   const seen = new Set<string>();
   const add = (r: Relation) => {
@@ -158,7 +158,7 @@ export function buildGraph(dataset: Dataset): BrainGraph {
   };
 }
 
-/** 분류 경로: 라우터 → 영역 → 하위 색인 → (안내) → 자료. 색인 링크로 정한 논리 경로이며, 여러 MOC가 연결해도 하나로 고정된다 */
+/** Primary path: router → area → sub-index → (guide) → material. A logical path set by index links; fixed even if several MOCs link it */
 export function primaryPath(g: BrainGraph, id: string): string[] {
   const path: string[] = [];
   const seen = new Set<string>();
@@ -172,9 +172,9 @@ export function primaryPath(g: BrainGraph, id: string): string[] {
 }
 
 /**
- * 영역 필터 강조 대상: 그 영역에 소속된 문서 + 그 영역의 색인 문서가 명시적으로 연결한(색인 연결) 문서.
- * 방향별 관계를 보므로 서로 다른 영역의 색인 A ↔ B가 서로 링크하면 양쪽 필터가 상대를 강조한다.
- * 주제 연결(MOC · 문서 사이 링크)만으로는 포함하지 않는다. 다른 문서는 숨기지 않고 흐리게 둔다(화면 쪽 책임).
+ * Area filter highlight set: documents in the area + documents explicitly linked by the area's indexes (index links).
+ * Uses directed relations, so if indexes A ↔ B in different areas link each other, both filters highlight the other.
+ * Topic links alone (MOC or document-to-document) don't count. Other documents are dimmed, not hidden (the view's job).
  */
 export function areaEmphasis(g: BrainGraph, areaId: string): Set<string> {
   const out = new Set<string>();
@@ -183,14 +183,14 @@ export function areaEmphasis(g: BrainGraph, areaId: string): Set<string> {
   return out;
 }
 
-/** 연결 보기별 화면 선: 영역 구조 = 분류 소속 + 색인 연결, 주제 연결 = 라우터 → MOC · MOC → 자료 · 문서 사이 링크 */
+/** Edges per link view: structure = primary + index links; topic = router → MOC, MOC → material, document-to-document links */
 export function edgesInView(g: BrainGraph, view: EdgeView): Edge[] {
   let edges = g.viewEdges.get(view);
   if (!edges) { edges = mergeEdges(g.relations, view); g.viewEdges.set(view, edges); }
   return edges;
 }
 
-/** 주어진 선을 따라 바로 이어진 문서 */
+/** Documents directly connected along the given edges */
 export function neighborsOf(edges: Edge[], id: string): Set<string> {
   const out = new Set<string>();
   for (const e of edges) {
@@ -202,7 +202,7 @@ export function neighborsOf(edges: Edge[], id: string): Set<string> {
 
 export interface Related { doc: BrainDoc; kind: EdgeKind; kinds: EdgeKind[] }
 
-/** 상세 패널용: 이 문서로 들어오는 관계와 나가는 관계(상대 문서마다 하나, 종류는 모두 표시) */
+/** For the detail panel: incoming and outgoing relations (one per other document, all kinds shown) */
 export function relationsOf(g: BrainGraph, id: string): { incoming: Related[]; outgoing: Related[] } {
   const group = (list: Relation[], other: (r: Relation) => string) => {
     const by = new Map<string, EdgeKind[]>();
@@ -219,7 +219,7 @@ export function relationsOf(g: BrainGraph, id: string): { incoming: Related[]; o
   return { incoming: group(g.relIn.get(id) ?? [], r => r.source), outgoing: group(g.relOut.get(id) ?? [], r => r.target) };
 }
 
-/** 본문 링크 주소 → 연결 문서 ID(문서 위치 기준 상대경로). 외부 주소 · 앵커 · 깨진 링크는 null */
+/** Body link href → linked document ID (relative to the document). null for external URLs, anchors and broken links */
 export function linkTarget(g: BrainGraph, fromId: string, href: string): string | null {
   const from = g.byId.get(fromId);
   if (!from) return null;

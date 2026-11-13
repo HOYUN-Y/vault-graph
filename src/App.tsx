@@ -1,5 +1,5 @@
-// 전체 화면 배치: 머리줄(제목 · 검색 · 시연) · 가운데 3D 신경망(실패 시 2D 대체) · 왼쪽 아래 필터 · 범례 · 아래 조작 막대 · 오른쪽(좁은 화면은 아래) 상세 패널.
-// 단축키: / 검색, Esc 검색 닫기 → 선택 해제 → 시연 멈춤. 캔버스에서 화살표 회전 · +/− 확대 · 0 전체 보기.
+// Full-screen layout: header (title · search · tour) · center 3D neural network (2D fallback on failure) · bottom-left filter · legend · bottom control dock · detail panel on the right (bottom on narrow screens).
+// Shortcuts: / search, Esc closes search → clears selection → stops the tour. On the canvas: arrows rotate · +/− zoom · 0 fit all.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, RefObject } from 'react';
 import { defaultExpanded, expandable, foldCounts, foldedVisible, pathChildCount, revealPrimaryPath, shownEdges, toggleExpanded, visibleSet } from './core/explore';
@@ -30,14 +30,14 @@ import { KIND_LABEL, buildPalette } from './ui/theme';
 
 const MOBILE = '(max-width: 720px)';
 const REDUCED = '(prefers-reduced-motion: reduce)';
-// 상세 패널을 본문 우선으로 접어 보이는 작은 화면(좁은 폭 또는 짧은 높이)
+// Small screens (narrow width or short height) where the detail panel collapses to show the body first
 const COMPACT = '(max-width: 720px), (max-height: 560px)';
 const TOUR_MS = 4600;
 const params = new URLSearchParams(location.search);
 const NODES = Number(params.get('nodes')) || 0;
 const FORCE_FALLBACK = params.get('webgl') === '0';
 const SKIP_OPENING = params.get('opening') === '0';
-// ?demo=1: 실제 볼트 설정이 있어도 합성 데모만 본다
+// ?demo=1: show only the synthetic demo even if a real vault is configured
 const FORCE_DEMO = params.get('demo') === '1';
 
 declare global { interface Window { __brainPerf?: Record<string, unknown> } }
@@ -67,8 +67,8 @@ function useSize(ref: RefObject<HTMLElement | null>, active: boolean) {
 }
 
 /**
- * 휴대폰 세로 조작 막대가 차지하는 오른쪽 아래 구석(무대 오른쪽 · 아래 가장자리부터 px).
- * undefined = 아직 재지 않음, null = 막대가 보이지 않음(넓은 화면 · 상세 패널 열림)
+ * Bottom-right corner taken by the portrait phone control dock (px from the stage's right and bottom edges).
+ * undefined = not measured yet, null = dock not visible (wide screen · detail panel open)
  */
 function useCorner(dock: RefObject<HTMLElement | null>, stage: RefObject<HTMLElement | null>, active: boolean) {
   const [corner, setCorner] = useState<{ w: number; h: number } | null | undefined>(undefined);
@@ -89,21 +89,21 @@ function useCorner(dock: RefObject<HTMLElement | null>, stage: RefObject<HTMLEle
 }
 
 export function App() {
-  // 데이터 출처: 합성 성능 데이터(?nodes) · 실제 볼트(로컬 읽기 전용 API, 검증된 결과가 있을 때만) · 합성 데모
+  // Data source: synthetic performance data (?nodes) · real vault (local read-only API, only with a verified result) · synthetic demo
   const [live, setLive] = useState<LiveGraph | null>(null);
   const [booted, setBooted] = useState(NODES > 0 || FORCE_DEMO);
   const [refreshing, setRefreshing] = useState(false);
   const realFiles = !NODES && live?.mode === 'real' && (live.state === 'connected' || live.state === 'unavailable') && live.files.length ? live.files : null;
-  const dataset = useMemo(() => (NODES ? syntheticDataset(NODES) : realFiles ? { label: '실제 볼트(읽기 전용)', synthetic: false, files: realFiles } : demoDataset), [realFiles]);
+  const dataset = useMemo(() => (NODES ? syntheticDataset(NODES) : realFiles ? { label: 'Real vault (read-only)', synthetic: false, files: realFiles } : demoDataset), [realFiles]);
   const graph = useMemo(() => buildGraph(dataset), [dataset]);
   const realMode = !!realFiles;
   const foldMode = realMode && live?.structure === 'workspace';
-  // 볼트가 바뀌거나 규칙 실패로 실제 데이터를 버리면, 열린 본문 · 검색 · 미리보기를 모두 새로 시작한다
+  // When the vault changes or real data is dropped because a rule failed, reset the open body, search and preview
   const dataKey = `${live?.mode ?? 'demo'}:${live?.vaultKey ?? ''}:${realMode ? 'real' : 'fallback'}`;
   const palette = useMemo(() => buildPalette(graph), [graph]);
   const layoutMs = useRef(0);
   const layoutWhere = useRef<'main' | 'worker'>('main');
-  // 작은 그래프(실제 볼트 등)는 바로 계산하고, 큰 그래프(5,000개 데모)는 작업자에서 계산하는 동안 화면이 멈추지 않게 한다
+  // Small graphs (real vault etc.) are computed right away; large graphs (5,000-doc demo) are computed in a worker so the screen doesn't freeze
   const bigLayout = graph.docs.length > ASYNC_LAYOUT_MIN;
   const syncPositions = useMemo(() => {
     if (bigLayout) return null;
@@ -137,22 +137,22 @@ export function App() {
   const [expanded, setExpanded] = useState<Set<string>>(() => defaultExpanded(graph, foldMode));
   const [legendOpen, setLegendOpen] = useState(() => !matchMedia(MOBILE).matches && innerHeight > 620);
   const [paused, setPaused] = useState(false);
-  // 장면 이름표(노드 글자) 켬/끔: 이 페이지 상태만. 3D · 2D 공통, 검색 · 범례 · 패널 글자와 접근성 이름은 그대로
+  // Labels (node name tags) on/off: page state only. Shared by 3D and 2D; search, legend, panel text and accessible names are unaffected
   const [labelsOn, setLabelsOn] = useState(true);
   const [opening, setOpening] = useState(!SKIP_OPENING && !FORCE_FALLBACK && !matchMedia(REDUCED).matches);
-  // 첫 화면 안내(규모 · 첫 행동 단서): 첫 조작이나 잠시 뒤 닫힌다
+  // First-screen intro (scale · first-action hint): closes on the first interaction or after a while
   const [intro, setIntro] = useState(true);
   const [tour, setTour] = useState<number | null>(null);
-  const [fallback, setFallback] = useState<string | null>(FORCE_FALLBACK ? '주소에 webgl=0이 있어 2D 대체 화면을 보여 줍니다.' : null);
-  // 2D 대체 배치는 대체 화면을 쓸 때만 계산한다
+  const [fallback, setFallback] = useState<string | null>(FORCE_FALLBACK ? 'The URL has webgl=0, so the 2D fallback is shown.' : null);
+  // Compute the 2D fallback layout only when the fallback is in use
   const flat = !!fallback;
   const layout2d = useMemo(() => (flat ? radialLayout(graph) : null), [graph, flat]);
   const [announcement, setAnnouncement] = useState('');
   const [warnClosed, setWarnClosed] = useState<string | null>(null);
-  // 장면 이름표 켬/끔: 장면 · 배치 · 카메라 · 모션은 그대로 두고 이름표만 바꾼다
+  // Labels on/off: change only the labels; scene · layout · camera · motion stay as they are
   const toggleLabels = useCallback(() => {
     setLabelsOn(!labelsOn);
-    setAnnouncement(labelsOn ? '장면 이름표 끔' : '장면 이름표 켬');
+    setAnnouncement(labelsOn ? 'Labels off' : 'Labels on');
   }, [labelsOn]);
 
   const scene = useRef<BrainCanvasHandle>(null);
@@ -171,17 +171,17 @@ export function App() {
   const doc = selected ? graph.byId.get(selected) ?? null : null;
   const emphasis = useMemo(() => (area ? areaEmphasis(graph, area) : null), [graph, area]);
   const visible = useMemo(() => visibleSet(graph, { expanded, view, pinned: selected }), [graph, expanded, view, selected]);
-  // 작업폴더 연결: 접힌 색인을 하위 개수를 단 덩어리로 보이고, 누르면 펼친다(색인 방식 · 데모는 이전처럼 모두 펼친 채 시작)
+  // Workspace mode: folded indexes appear as clusters labelled with their child count and expand on click (indexed mode and the demo start fully expanded as before)
   const counts = useMemo(() => (foldMode ? foldCounts(graph) : null), [graph, foldMode]);
   const folded = useMemo(() => (counts ? foldedVisible(visible, expanded, counts) : undefined), [counts, visible, expanded]);
   const shown = useMemo(() => new Map<string, EdgeKind>(shownEdges(graph, { expanded, view, pinned: selected }, visible).map(e => [e.key, e.kind])), [graph, expanded, view, selected, visible]);
 
   const tourSteps = useMemo(() => {
-    // 데모 볼트의 대표 문서(경로 → 고유 ID). 합성 성능 데이터에는 없으므로 영역 · MOC로 대신한다
-    const wanted = ['work.md', 'project-nova.md', 'moc-AI-활용.md', 'src-work/operations/prompts/회의록 요약 프롬프트.md', 'personal.md', 'project-ml-study.md', 'src-work/content/style-guide.md'];
+    // Representative docs in the demo vault (path → unique ID; paths must match src/data/demo.ts). Synthetic performance data has none, so areas · MOCs are used instead
+    const wanted = ['work.md', 'project-nova.md', 'moc-ai.md', 'src-work/operations/prompts/meeting-notes-summary-prompt.md', 'personal.md', 'project-ml-study.md', 'src-work/content/style-guide.md'];
     const ids = wanted.map(p => graph.idOfPath.get(p)).filter((id): id is string => !!id);
     if (ids.length >= 4) return ids;
-    // 실제 볼트 · 합성 성능 데이터: 데모 경로 대신 구조로 고른다(영역 → 그 영역의 안내 · 하위 색인 → 주제 MOC → 공유 자료 → 다음 영역)
+    // Real vault · synthetic performance data: pick by structure instead of demo paths (area → its guides · sub-indexes → topic MOC → shared material → next area)
     const out: string[] = [];
     const add = (id?: string) => { if (id && !out.includes(id)) out.push(id); };
     const shared = graph.docs.find(d => d.kind === 'material' && (graph.inLinks.get(d.id) ?? []).filter(s => graph.byId.get(s)?.kind !== 'material').length >= 2);
@@ -194,7 +194,7 @@ export function App() {
     return out.slice(0, 7);
   }, [graph]);
 
-  // 시연을 멈추면 시연이 시작한 카메라 이동도 그 자리에서 멈춘다
+  // Stopping the tour also stops any camera move the tour started, right where it is
   const tourRef = useRef<number | null>(null);
   tourRef.current = tour;
   const stopTour = useCallback(() => {
@@ -204,10 +204,10 @@ export function App() {
     setTour(null);
   }, []);
 
-  // ── 실제 볼트: 처음 상태 확인(짧게 기다려 데모가 잠깐 보이는 일을 막음) · 주기 확인 · 수동 새로고침 ──
+  // ── Real vault: initial status check (short wait so the demo doesn't flash) · periodic check · manual refresh ──
   const liveRef = useRef<LiveGraph | null>(null);
   liveRef.current = live;
-  // 요청 세대: 자동 확인 · 수동 새로고침이 겹쳐 늦게 온 이전 응답이 최신 결과(비공개 반영 · 볼트 전환)를 덮지 않게, 가장 최근 요청의 응답만 쓴다
+  // Request generation: auto checks and manual refreshes can overlap, so only the latest request's response is used; a late older response must not overwrite a newer result (private rules applied · vault switch)
   const graphSeq = useRef(0), statusSeq = useRef(0);
   const loadGraph = useCallback(async () => {
     const seq = ++graphSeq.current;
@@ -248,7 +248,7 @@ export function App() {
     setRefreshing(false);
   }, [loadGraph]);
 
-  // 갱신된 그래프에 맞추기: 남아 있는 선택 · 영역 필터 · 접힘은 유지, 사라진(삭제 · 비공개) 것은 정리, 새 경로는 펼친 상태로
+  // Fit to the updated graph: keep remaining selection · area filter · folds, drop what disappeared (deleted · private), new paths start expanded
   const prevGraph = useRef(graph);
   useEffect(() => {
     const prev = prevGraph.current;
@@ -256,20 +256,20 @@ export function App() {
     prevGraph.current = graph;
     stopTour();
     setHover(null);
-    // 빠진 자료가 있으면 마지막 알림(이전 제목이 든 aria-live 문구)을 이름 없는 문구로 바꾼다
+    // If material was removed, replace the last announcement (aria-live text holding the old title) with a nameless message
     if (prev.docs.some(d => !graph.byId.has(d.id))) {
-      setAnnouncement(selectedRef.current && !graph.byId.has(selectedRef.current) ? '선택한 자료가 더 이상 표시되지 않아 선택을 해제했습니다' : '자료 목록이 갱신되었습니다');
+      setAnnouncement(selectedRef.current && !graph.byId.has(selectedRef.current) ? 'The selected item is no longer shown, so it was deselected' : 'Item list updated');
     }
     setSelected(cur => (cur && graph.byId.has(cur) ? cur : null));
     setArea(cur => (cur && graph.byId.has(cur) ? cur : null));
     setExpanded(old => {
-      // 새로 생긴 경로는 처음 상태 규칙을 따른다(작은 그래프 = 펼침, 큰 그래프 = 영역 색인만 펼침)
+      // New paths follow the initial-state rule (small graph = expanded, large graph = only area indexes expanded)
       const was = expandable(prev), now = expandable(graph), fresh = defaultExpanded(graph, foldMode), next = new Set<string>();
       for (const id of now) if (old.has(id) || (!was.has(id) && fresh.has(id))) next.add(id);
       return next;
     });
   }, [graph, stopTour]);
-  // 데이터 출처가 바뀌면(실제 ↔ 데모 · 다른 볼트 · 차단 · 복구) 보존하지 않는다: 선택 · 영역 필터 · 연결 보기 · 펼침 · 카메라를 기본 전체 구도로
+  // When the data source changes (real ↔ demo · another vault · blocked · recovered), nothing is kept: selection · area filter · link view · expansion · camera return to the default full view
   const firstKey = useRef(true);
   useEffect(() => {
     setSelected(null); setPreview(null);
@@ -277,7 +277,7 @@ export function App() {
     stopTour(); setHover(null); setArea(null); setView('all'); setExpanded(defaultExpanded(graph, foldMode));
   }, [dataKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 실제 자료 미리보기: 선택할 때만 불투명 ID로 읽는다(갱신되면 다시 읽음)
+  // Real material preview: read by opaque ID only when selected (re-read on update)
   const [preview, setPreview] = useState<{ id: string; p: Preview } | null>(null);
   const previewDoc = selected ? graph.byId.get(selected) : undefined;
   useEffect(() => {
@@ -301,14 +301,14 @@ export function App() {
     focusPanel.current = !!opts.focus;
     setSelected(id);
     scene.current?.focus(id);
-    setAnnouncement(`${next.title} 선택 · ${KIND_LABEL[next.kind]}`);
+    setAnnouncement(`${next.title} selected · ${KIND_LABEL[next.kind]}`);
   }, [graph, selected, stopTour]);
 
   const close = useCallback(() => {
     setSelected(null);
-    // 선택 해제: 전체 구도로 돌아간다(정지 · 동작 줄이기에서는 즉시)
+    // Deselect: return to the full view (instantly when paused or with reduced motion)
     scene.current?.fit();
-    setAnnouncement('선택 해제');
+    setAnnouncement('Selection cleared');
     const back = returnFocus.current;
     returnFocus.current = null;
     requestAnimationFrame(() => {
@@ -317,7 +317,7 @@ export function App() {
     });
   }, []);
 
-  // 덩어리를 눌러 펼친 직후의 두 번 누르기(dblclick)가 곧바로 다시 접지 않게, 방금 펼친 문서를 잠깐 기억한다
+  // Briefly remember the doc just expanded from a cluster so the double-click (dblclick) right after doesn't fold it again
   const clickOpened = useRef<{ id: string; at: number } | null>(null);
   const toggle = useCallback((id: string) => {
     if (!canExpand.has(id)) return;
@@ -325,26 +325,26 @@ export function App() {
     if (recent && recent.id === id && performance.now() - recent.at < 600) return;
     setExpanded(e => {
       const next = toggleExpanded(e, id);
-      setAnnouncement(`${graph.byId.get(id)?.title} ${next.has(id) ? '펼침' : '접음'}`);
+      setAnnouncement(`${graph.byId.get(id)?.title} ${next.has(id) ? 'expanded' : 'collapsed'}`);
       return next;
     });
   }, [canExpand, graph]);
 
-  /** 장면에서 누르기: 접힌 덩어리는 펼치면서 고르고, 나머지(펼친 색인 · 자료)는 고르기만 한다 */
+  /** Click in the scene: a folded cluster is expanded and selected; anything else (expanded index · material) is only selected */
   const pick = useCallback((id: string | null) => {
     if (!id) { if (selected) close(); return; }
     if (folded?.has(id)) {
       clickOpened.current = { id, at: performance.now() };
       setExpanded(e => new Set(e).add(id));
       select(id);
-      setAnnouncement(`${graph.byId.get(id)?.title} 펼침 · 하위 ${folded.get(id)!.toLocaleString('ko-KR')}개`);
+      setAnnouncement(`${graph.byId.get(id)?.title} expanded · ${folded.get(id)!.toLocaleString('en-US')} ${folded.get(id) === 1 ? 'child' : 'children'}`);
       return;
     }
     select(id);
   }, [folded, selected, close, select, graph]);
 
-  // 자동 시연: 대표 영역 · 주제 · 문서를 차례로 방문. 직접 조작 · 검색 · 선택 · 정지 때 멈추고, 시연 단추로 다시 시작한다
-  // 탭이 숨으면 남은 시간을 멈춰 두고, 돌아오면 같은 단계의 남은 시간부터 이어 간다(단계를 건너뛰지 않는다)
+  // Auto tour: visits representative areas · topics · docs in turn. Stops on direct interaction · search · selection · pause; the tour button restarts it
+  // When the tab is hidden the remaining time is held, and on return the same step resumes with its remaining time (no steps are skipped)
   const tourClock = useRef<{ step: number; remaining: number; started: number } | null>(null);
   useEffect(() => {
     if (tour === null) { tourClock.current = null; return; }
@@ -377,10 +377,10 @@ export function App() {
     scene.current?.skipOpening();
     setPaused(false);
     setTour(0);
-    setAnnouncement('자동 시연 시작');
+    setAnnouncement('Auto tour started');
   };
 
-  // 검색 · 패널 안 링크로 고르면 패널 제목으로 포커스를 옮기고, 새 문서는 맨 위부터 보여 준다
+  // When picked from search or a panel link, move focus to the panel title and show the new doc from the top
   useEffect(() => {
     if (!selected) return;
     panel.current?.querySelector('.panel__scroll')?.scrollTo({ top: 0 });
@@ -433,12 +433,12 @@ export function App() {
   const headerSize = useSize(header, true);
   const legendSize = useSize(legend, true);
   const panelSize = useSize(panel, !!doc);
-  // 휴대폰 세로 조작 막대(오른쪽 아래, 상세 패널이 열리면 숨김): 전체 보기 · 이름표가 막대 밑에 깔리지 않게 그 사각형을 뺀다
+  // Portrait phone control dock (bottom right, hidden while the detail panel is open): exclude its rectangle so fit-all and labels don't end up under it
   const corner = useCorner(dock, stage, mobile && !doc);
   const insets: Insets = mobile
     ? { top: headerSize.h + 8, right: 0, left: 0, bottom: doc ? panelSize.h : 64, corner: !doc && corner ? corner : undefined }
     : { top: headerSize.h + 8, right: doc ? panelSize.w + 32 : 24, left: legendOpen ? legendSize.w + 32 : 24, bottom: 64 };
-  // 상단바 · 범례 크기를 잰 뒤에 3D 장면을 만든다(재기 전 값으로 첫 구도를 잡으면 곧바로 미끄러져 첫 누르기가 엇나간다)
+  // Build the 3D scene after measuring the top bar and legend (framing with pre-measure values makes the view slide right away and the first click misses)
   const insetsReady = headerSize.h > 0 && (mobile || !legendOpen || legendSize.w > 0) && (!mobile || !!doc || corner !== undefined);
 
   useEffect(() => {
@@ -449,22 +449,22 @@ export function App() {
       glowDepth: (mode: GlowDepthMode) => scene.current?.debugGlowDepth(mode) };
   }, [graph, positions]);
 
-  // 검증용(?perf=1에서만 노출): 지금 보이는 문서 · 선 · 선택 · 펼침
+  // For verification (exposed only with ?perf=1): currently visible docs · edges · selection · expansion
   const probe = useRef({});
   probe.current = { visible: [...visible], shown: shown.size, selected, expanded: [...expanded], view, area, paused, labels: labelsOn, orbit: tour === null && !selected && !paused && !reduced, tour, opening, fallback: !!fallback };
   const materials = graph.docs.filter(d => d.kind === 'material').length;
-  // 실제 볼트: 서버가 읽으며 찾은 문제(이름 없는 문구)와 화면 변환 문제를 함께 보인다
+  // Real vault: show problems the server found while reading (nameless messages) together with display conversion problems
   const problems = realMode ? [...(live?.problems ?? []), ...graph.problems] : graph.problems;
-  // 닫은 알림은 문제 목록이 바뀔 때 다시 뜬다
+  // A dismissed warning comes back when the problem list changes
   const warnKey = `${dataKey}|${problems.join('\n')}`;
-  // 정지하지 않았으면 무엇이든(회전 · 신호 · 시연 · 전환) 움직이는 상태다. 한 번 누르면 모두 멈추고, 다시 누르면 회전까지 재생한다
+  // Unless paused, something is moving (rotation · signals · tour · transitions). One press stops everything; another press resumes it all, rotation included
   const motionOn = !paused;
   const toggleMotion = () => {
     stopTour();
-    if (paused) { setPaused(false); setAnnouncement('모션 재생'); }
-    else { setPaused(true); setAnnouncement('모션 정지'); }
+    if (paused) { setPaused(false); setAnnouncement('Motion playing'); }
+    else { setPaused(true); setAnnouncement('Motion paused'); }
   };
-  const sourceView = liveView(live, realMode, NODES ? '합성 성능 데이터' : null, !booted);
+  const sourceView = liveView(live, realMode, NODES ? 'Synthetic performance data' : null, !booted);
   useEffect(() => { if (live && live.mode === 'real') setAnnouncement(sourceView.long); }, [sourceView.tone, live?.mode]); // eslint-disable-line react-hooks/exhaustive-deps
   const tourDoc = tour !== null && tourSteps[tour] ? graph.byId.get(tourSteps[tour]) : null;
 
@@ -475,31 +475,31 @@ export function App() {
         <div className="brand">
           <BrandMark />
           <div className="brand__text">
-            <h1 className="brand__title">세컨드 브레인</h1>
-            <p className="brand__sub">신경망 지도 · <LiveBadge view={sourceView} canRefresh={live?.mode === 'real'} refreshing={refreshing} onRefresh={() => { void refreshLive(); }} /></p>
+            <h1 className="brand__title">Second Brain</h1>
+            <p className="brand__sub">Neural map · <LiveBadge view={sourceView} canRefresh={live?.mode === 'real'} refreshing={refreshing} onRefresh={() => { void refreshLive(); }} /></p>
           </div>
         </div>
         <SearchBox key={dataKey} ref={search} graph={graph} palette={palette}
           onPick={id => select(id, { focus: true, reveal: true })} onLeave={() => stage.current?.querySelector<HTMLElement>('canvas')?.focus({ preventScroll: true })}
           onActivity={() => { stopTour(); scene.current?.cancelCamera(); scene.current?.holdRotation(); }} />
         <div className="topbar__end">
-          <p className="topbar__stats" title={!booted ? '볼트 연결을 확인하는 중입니다' : realMode ? `실제 볼트 항목 = 안내 문서 ${graph.docs.length - materials} + 연결 자료 ${materials}(폴더 포함, 비공개 제외) · 연결 = 화면에 그리는 선` : '합성 데모 데이터의 개수이며 실제 운영 수치가 아닙니다'}>
-            {!booted ? <>항목 <b>–</b> · 자료 <b>–</b> · 연결 <b>–</b></> : <>{realMode ? '항목' : '가상 문서'} <b>{graph.docs.length}</b> · 자료 <b>{materials}</b> · 연결 <b>{graph.edges.length}</b></>}
+          <p className="topbar__stats" title={!booted ? 'Checking the vault connection' : realMode ? `Real vault items = guide documents ${graph.docs.length - materials} + linked materials ${materials} (folders included, private excluded) · Links = lines drawn on screen` : 'Counts from synthetic demo data, not real figures'}>
+            {!booted ? <>Items <b>–</b> · Materials <b>–</b> · Links <b>–</b></> : <>{realMode ? 'Items' : 'Demo docs'} <b>{graph.docs.length}</b> · Materials <b>{materials}</b> · Links <b>{graph.edges.length}</b></>}
           </p>
           <button type="button" className="tour-button" aria-pressed={tour !== null} onClick={() => (tour === null ? startTour() : stopTour())}>
-            <TourIcon /><span>{tour === null ? '자동 시연' : '시연 멈춤'}</span>
+            <TourIcon /><span>{tour === null ? 'Auto tour' : 'Stop tour'}</span>
           </button>
         </div>
       </header>
 
-      <main ref={stage} className="stage" tabIndex={-1} aria-label="세컨드 브레인 연결망">
+      <main ref={stage} className="stage" tabIndex={-1} aria-label="Second Brain network">
         {!booted ? (
-          <p className="stage__boot" role="status">볼트 연결을 확인하는 중…</p>
+          <p className="stage__boot" role="status">Checking the vault connection…</p>
         ) : fallback ? (
           <NetworkPreview graph={graph} palette={palette} layout={layout2d!} view={view} emphasis={emphasis} selected={selected} insets={insets} showLabels={labelsOn}
             onSelect={id => select(id)} />
         ) : !insetsReady ? null : !positions ? (
-          <p className="stage__boot" role="status">문서 {graph.docs.length.toLocaleString('ko-KR')}개의 3D 자리를 계산하는 중…</p>
+          <p className="stage__boot" role="status">Computing 3D positions for {graph.docs.length.toLocaleString('en-US')} docs…</p>
         ) : (
           <BrainCanvas ref={scene} viewKey={dataKey} graph={graph} palette={palette} positions={positions} visible={visible} shown={shown} emphasis={emphasis}
             selected={selected} hover={hover} folded={folded} insets={insets} paused={paused} autoRotate={tour === null && !selected} reduced={reduced} opening={opening} showLabels={labelsOn}
@@ -509,8 +509,8 @@ export function App() {
               onHover: id => setHover(id),
               onInteract: () => stopTour(),
               onOpeningDone: () => setOpening(false),
-              onContextLost: () => setFallback('3D 그리기(WebGL)가 중단되어 2D 대체 화면으로 바꿨습니다.'),
-              onFail: reason => setFallback(`3D(WebGL)를 시작하지 못해 2D 대체 화면을 보여 줍니다. (${reason})`)
+              onContextLost: () => setFallback('3D rendering (WebGL) stopped, so the view switched to the 2D fallback.'),
+              onFail: reason => setFallback(`Couldn't start 3D (WebGL), so the 2D fallback is shown. (${reason})`)
             }} />
         )}
         {fallback && <p className="stage__note stage__note--fallback" role="status">{fallback}</p>}
@@ -518,44 +518,44 @@ export function App() {
 
       {booted && opening && !fallback && positions && (
         <div className="opening" role="status">
-          <span>세컨드 브레인을 펼치는 중</span>
-          <button type="button" onClick={() => scene.current?.skipOpening()}>건너뛰기</button>
+          <span>Unfolding the Second Brain</span>
+          <button type="button" onClick={() => scene.current?.skipOpening()}>Skip</button>
         </div>
       )}
 
       {booted && introShown && (
         <Intro docs={graph.docs.length} edges={graph.edges.length} areas={graph.areas.length} topics={graph.mocs.length}
-          tag={NODES ? '합성 성능 데이터' : realMode ? '실제 볼트 · 읽기 전용' : '합성 데모'} docLabel={realMode ? '항목' : '가상 문서'} still={paused || reduced} flat={!!fallback} onClose={() => setIntro(false)} />
+          tag={NODES ? 'Synthetic performance data' : realMode ? 'Real vault · read-only' : 'Synthetic demo'} docLabel={realMode ? 'items' : 'demo docs'} still={paused || reduced} flat={!!fallback} onClose={() => setIntro(false)} />
       )}
 
       {tourDoc && (
         <div className="tour-caption" role="status" aria-live="polite">
-          <span className="tour-caption__step">시연 {tour! + 1}/{tourSteps.length}</span>
+          <span className="tour-caption__step">Tour {tour! + 1}/{tourSteps.length}</span>
           <strong>{tourDoc.title}</strong>
           <span className="tour-caption__text">{tourDoc.summary}</span>
-          <button type="button" onClick={stopTour}>멈춤</button>
+          <button type="button" onClick={stopTour}>Stop</button>
         </div>
       )}
 
       <div ref={legend} className="legend-slot">
         <LegendFilter graph={graph} palette={palette} area={area} onArea={a => { stopTour(); setArea(a); }} view={view} onView={v => { stopTour(); setView(v); }}
           open={legendOpen} onToggle={() => setLegendOpen(o => !o)}
-          source={{ text: problems.length ? `${sourceView.long} 데이터 구조 문제 ${problems.length}건.` : sourceView.long, real: realMode, counts: realMode ? live?.counts ?? null : null, canRefresh: live?.mode === 'real', refreshing, onRefresh: () => { void refreshLive(); } }} />
+          source={{ text: problems.length ? `${sourceView.long} Data structure problems: ${problems.length}.` : sourceView.long, real: realMode, counts: realMode ? live?.counts ?? null : null, canRefresh: live?.mode === 'real', refreshing, onRefresh: () => { void refreshLive(); } }} />
       </div>
 
-      <div ref={dock} className="dock" role="toolbar" aria-label="화면 조작">
-        <button type="button" className="dock__button" onClick={toggleMotion} aria-label={motionOn ? '모션 정지' : '모션 재생'} title={motionOn ? '모션 정지' : '모션 재생'} disabled={!!fallback}>
+      <div ref={dock} className="dock" role="toolbar" aria-label="View controls">
+        <button type="button" className="dock__button" onClick={toggleMotion} aria-label={motionOn ? 'Pause motion' : 'Play motion'} title={motionOn ? 'Pause motion' : 'Play motion'} disabled={!!fallback}>
           {motionOn ? <PauseIcon /> : <PlayIcon />}
         </button>
-        <button type="button" className="dock__button" onClick={() => { stopTour(); scene.current?.zoom(1 / 1.25); }} aria-label="축소" title="축소 (−)" disabled={!!fallback}><MinusIcon /></button>
-        <button type="button" className="dock__button" onClick={() => { stopTour(); scene.current?.zoom(1.25); }} aria-label="확대" title="확대 (+)" disabled={!!fallback}><PlusIcon /></button>
-        <button type="button" className="dock__button" onClick={() => { stopTour(); scene.current?.fit(); }} aria-label="전체 보기" title="전체 보기 (0)" disabled={!!fallback}><FitIcon /></button>
+        <button type="button" className="dock__button" onClick={() => { stopTour(); scene.current?.zoom(1 / 1.25); }} aria-label="Zoom out" title="Zoom out (−)" disabled={!!fallback}><MinusIcon /></button>
+        <button type="button" className="dock__button" onClick={() => { stopTour(); scene.current?.zoom(1.25); }} aria-label="Zoom in" title="Zoom in (+)" disabled={!!fallback}><PlusIcon /></button>
+        <button type="button" className="dock__button" onClick={() => { stopTour(); scene.current?.fit(); }} aria-label="Fit all" title="Fit all (0)" disabled={!!fallback}><FitIcon /></button>
         <span className="dock__sep" aria-hidden="true" />
-        <button type="button" className="dock__button dock__button--text" onClick={() => { stopTour(); setExpanded(defaultExpanded(graph, foldMode)); setAnnouncement('펼침을 처음 상태로'); }}
-          aria-label="펼침 초기화" title="모든 경로를 처음처럼 펼칩니다"><FoldIcon /><span className="dock__label" aria-hidden="true">펼침 초기화</span><span className="dock__label-short" aria-hidden="true">초기화</span></button>
+        <button type="button" className="dock__button dock__button--text" onClick={() => { stopTour(); setExpanded(defaultExpanded(graph, foldMode)); setAnnouncement('Folds reset to the initial state'); }}
+          aria-label="Reset folds" title="Return every path to its initial expand/collapse state"><FoldIcon /><span className="dock__label" aria-hidden="true">Reset folds</span><span className="dock__label-short" aria-hidden="true">Reset</span></button>
         <button type="button" className="dock__button dock__button--text dock__button--labels" onClick={toggleLabels} aria-pressed={labelsOn}
-          aria-label="장면 이름표" title={labelsOn ? '장면 이름표 끄기 (L)' : '장면 이름표 켜기 (L)'}>
-          <LabelIcon off={!labelsOn} /><span className="dock__label" aria-hidden="true">이름표 {labelsOn ? '켬' : '끔'}</span><span className="dock__label-short" aria-hidden="true">이름표</span>
+          aria-label="Labels" title={labelsOn ? 'Hide labels (L)' : 'Show labels (L)'}>
+          <LabelIcon off={!labelsOn} /><span className="dock__label" aria-hidden="true">Labels {labelsOn ? 'on' : 'off'}</span><span className="dock__label-short" aria-hidden="true">Labels</span>
         </button>
       </div>
 
@@ -569,8 +569,8 @@ export function App() {
 
       {problems.length > 0 && warnKey !== warnClosed && (
         <div className="data-warning" role="alert">
-          <p className="data-warning__text" title={problems.slice(0, 3).join(' · ')}>데이터 구조 문제 {problems.length}건: {problems.slice(0, 3).join(' · ')}</p>
-          <button type="button" className="data-warning__close" onClick={() => setWarnClosed(warnKey)} aria-label="구조 문제 알림 닫기(범례 '데이터'에 건수가 남음)" title="닫기"><CloseIcon /></button>
+          <p className="data-warning__text" title={problems.slice(0, 3).join(' · ')}>Data structure problems ({problems.length}): {problems.slice(0, 3).join(' · ')}</p>
+          <button type="button" className="data-warning__close" onClick={() => setWarnClosed(warnKey)} aria-label="Dismiss structure problem warning (the count stays under 'Data' in the legend)" title="Close"><CloseIcon /></button>
         </div>
       )}
       <p className="sr-only" aria-live="polite">{announcement}</p>

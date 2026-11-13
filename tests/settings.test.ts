@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-// 설정 계약(후속 연결 준비): 로컬 settings.json에는 볼트 절대경로 vaultPath 하나만 둔다.
-// 원문 루트(src-*)는 따로 설정하지 않고 후속 연결기가 vaultPath/CLAUDE.md의 등록 표에서 찾는다. 지금은 이 파일을 읽지 않는다.
+// Settings contract: the local settings.json holds the absolute vault path (vaultPath) plus structure and routerPath.
+// Source roots (src-*) are not configured separately; they are found in the router's registered table. This test does not read the real file.
 const root = new URL('../', import.meta.url);
 
-test('설정 예시: 기본 구조와 라우터를 지정하고 볼트 경로는 비어 있다', () => {
+test('settings example: sets the default structure and router, with an empty vault path', () => {
   const example = JSON.parse(readFileSync(new URL('settings.example.json', root), 'utf8'));
   assert.deepEqual(Object.keys(example), ['vaultPath', 'structure', 'routerPath']);
   assert.equal(example.structure, 'indexed');
@@ -14,7 +14,7 @@ test('설정 예시: 기본 구조와 라우터를 지정하고 볼트 경로는
   assert.equal(example.vaultPath, '');
 });
 
-test('설정 보호: 실제 로컬 settings.json은 git에서 제외한다', () => {
+test('settings protection: the real local settings.json is git-ignored', () => {
   const ignore = readFileSync(new URL('.gitignore', root), 'utf8').split('\n').map(l => l.trim());
   assert.ok(ignore.includes('/settings.json'));
 });

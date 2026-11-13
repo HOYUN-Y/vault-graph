@@ -1,6 +1,6 @@
-// 1단계 임시 미리보기(정적 2D)용 방사형 배치. 3D 신경망 배치는 다음 단계에서 이 모듈과 별도로 만든다.
-// 위치는 그래프(분류 소속)만으로 정한다 — 필터 · 연결 보기 · 선택이 바뀌어도 자료가 움직이지 않는다.
-// 공유 자료도 주 소속 영역 쪽 자리 하나만 갖는다. 좌표는 단위 원 기준(x 오른쪽, y 아래쪽).
+// Radial layout for the stage-1 temporary preview (static 2D). The 3D network layout is a separate module.
+// Positions depend only on the graph (primary) — filters, link view and selection never move materials.
+// Shared materials get one spot, on their primary area's side. Coordinates on the unit circle (x right, y down).
 import type { BrainGraph } from './graph';
 
 export interface Placement { x: number; y: number; angle: number; radius: number }
@@ -8,16 +8,16 @@ export interface Placement { x: number; y: number; angle: number; radius: number
 const RADII = [0, 0.3, 0.56, 0.8, 0.98, 1.1];
 const MOC_RADIUS = 0.2;
 const DEG = Math.PI / 180;
-// 잎이 많아 같은 반지름의 이웃 간격이 MIN_ARC보다 좁아지면 잎을 안쪽으로 몇 줄(ROW_STEP 간격, 최대 MAX_ROWS)에 엇갈려 둔다
+// When many leaves make neighbor spacing at one radius narrower than MIN_ARC, stagger leaves inward in rows (ROW_STEP apart, up to MAX_ROWS)
 const MIN_ARC = 0.012;
 const ROW_STEP = 0.03;
 const MAX_ROWS = 4;
-// 그래도 모자라면(5,000개 데모는 영역마다 잎 1,000개 남짓) 촘촘한 배치: 안내 문서는 안쪽 원(DENSE_HUB 비율)에 두고,
-// 잎은 바깥 띠(DENSE_BAND)에 각도 순서대로 열(列)마다 여러 줄씩 채운다. 이웃 간격은 줄 · 열 모두 MIN_ARC 이상이다
+// If that's still not enough (the 5,000 demo has ~1,000 leaves per area), use a dense layout: guide documents on an inner circle (DENSE_HUB ratio),
+// leaves fill the outer band (DENSE_BAND) column by column in angle order, several rows each. Row and column spacing are both at least MIN_ARC
 const DENSE_HUB = 0.6;
 const DENSE_BAND: [number, number] = [0.68, 1.1];
 
-/** 영역 하나의 부채꼴 너비(라디안). 영역이 넷 이상이면 사이 여백을 줄인다 */
+/** Wedge width of one area (radians). Gaps shrink with four or more areas */
 export const wedgeWidth = (areas: number) => Math.min(150, 360 / Math.max(areas, 1) - (areas > 3 ? 16 : 30)) * DEG;
 
 export function radialLayout(g: BrainGraph): Map<string, Placement> {
@@ -26,12 +26,12 @@ export function radialLayout(g: BrainGraph): Map<string, Placement> {
     out.set(id, { x: radius * Math.cos(angle), y: -radius * Math.sin(angle), angle, radius });
   if (g.routerId) place(g.routerId, 0, 0);
 
-  // 영역마다 부채꼴 하나. 첫 영역이 왼쪽(180°)에서 시작해 고르게 나눈다
+  // One wedge per area, evenly split, starting with the first area on the left (180°)
   const n = g.areas.length;
   const width = wedgeWidth(n);
   g.areas.forEach((area, i) => {
     const center = (180 + (360 / n) * i) * DEG;
-    // 잎(하위가 없는 문서)에 자리를 고르게 나누고, 하위 색인 묶음 사이에는 반 칸을 비운다
+    // Spread slots evenly over leaves (documents with no children), leaving half a slot between sub-index groups
     const leaves: { id: string; slot: number }[] = [];
     let slot = 0;
     const walk = (id: string, top: boolean) => {
@@ -47,7 +47,7 @@ export function radialLayout(g: BrainGraph): Map<string, Placement> {
     const rows = Math.min(MAX_ROWS, need);
     const inset = new Map(leaves.map((leaf, k) => [leaf.id, (k % rows) * ROW_STEP]));
     const dense = need > MAX_ROWS;
-    // 상위 문서는 하위 각도의 가운데
+    // A parent sits at the middle of its children's angles
     const settle = (id: string): number => {
       const kids = g.children.get(id) ?? [];
       if (!kids.length) return angleOf.get(id)!;
@@ -74,12 +74,12 @@ export function radialLayout(g: BrainGraph): Map<string, Placement> {
     });
   });
 
-  // 주제 MOC: 영역 부채꼴 사이(위 · 아래)에 번갈아, 가운데 가까이
+  // Topic MOCs: alternate in the gaps between area wedges (above/below), near the center
   const gaps = Math.max(n, 1);
   g.mocs.forEach((moc, i) => {
     const gap = i % gaps, round = Math.floor(i / gaps);
     const center = (180 + (360 / gaps) * gap + 360 / gaps / 2) * DEG;
-    // 영역이 넷 이상이면 틈이 좁아지므로 같은 비율로 좁혀 이웃 틈의 MOC와 겹치지 않게 한다
+    // With four or more areas the gaps narrow, so shrink by the same ratio to avoid overlapping MOCs in neighboring gaps
     const offset = (round % 2 === 0 ? -1 : 1) * (30 + 14 * Math.floor(round / 2)) * Math.min(1, 3 / gaps) * DEG;
     place(moc.id, center + offset, MOC_RADIUS);
   });

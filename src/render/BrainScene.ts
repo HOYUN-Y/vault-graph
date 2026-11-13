@@ -1,10 +1,10 @@
-// Three.js 3D 신경망 장면. 데이터 · 규칙(core/)과 분리된 그리기 · 입력 전용 모듈이다.
-// - 노드: 복셀(정육면체 조각을 인스턴싱한 한 번의 그리기). 문서 하나 = 노드 하나이고 종류마다 조립 형태가 다르다(render/voxel.ts).
-//   면마다 밝기가 달라 회전하면 입체 면이 읽히고, 모서리는 밝은 테두리로 격자를 드러낸다. 노드 자리는 격자에 맞춘다.
-//   노드 뒤 발광은 Points(픽셀 띠 모양) 한 겹이며 누르기 판정도 이 Points로 한다(조각 수와 무관하게 노드 기준).
-// - 선: 곡선(2차 베지어)을 잘게 나눈 LineSegments, 신호: 보이는 선을 따라 흐르는 픽셀 블록 세 칸, 바닥: 옅은 격자면
-// - 오프닝: 뇌 형상 좌표(장식 입자 + 노드 출발점)에서 실제 자리로 풀린다. 실제 자리는 바꾸지 않는다.
-// - 지속 효과(자동 회전 · 신호)는 정지 · 동작 줄이기 · 탭 숨김에서 멈추고, 할 일이 없으면 그리기를 쉰다.
+// Three.js 3D network scene. Drawing and input only, separate from data and rules (core/).
+// - Nodes: voxels (cube pieces in one instanced draw). One document = one node, with a per-kind assembly shape (render/voxel.ts).
+//   Faces differ in brightness so rotation reads as 3D, and bright edges outline the grid. Node positions snap to the grid.
+//   The glow behind nodes is one Points layer (pixel bands), also used for hit testing (per node, regardless of piece count).
+// - Lines: curves (quadratic Bézier) split into LineSegments; signals: three pixel blocks flowing along visible lines; floor: faint grid plane
+// - Opening: unfolds from brain-shaped coordinates (decor particles + node start points) to real positions. Real positions never change.
+// - Ongoing effects (auto-rotation, signals) stop on pause, reduced motion and hidden tabs; rendering idles when there's nothing to do.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Vec3 } from '../core/layout3d';
@@ -21,61 +21,61 @@ export interface SceneEdgeInput { key: string; a: string; b: string; kind: EdgeK
 export type GlowDepthMode = 'lift' | 'raw' | 'off' | 'none';
 export interface SceneState {
   visible: ReadonlySet<string>;
-  /** 보이는 선: 쌍 키 → 이 보기에서의 대표 종류 */
+  /** Visible edges: pair key → representative kind in this view */
   shown: ReadonlyMap<string, EdgeKind>;
   emphasis: ReadonlySet<string> | null;
   selected: string | null;
   hover: string | null;
-  /** 보이지만 접힌 색인 → 접힌 하위 개수. 개수에 따라 덩어리가 커지고 이름표에 +개수가 붙는다 */
+  /** Visible but collapsed index → collapsed child count. The cluster grows with the count and its label gets +count */
   folded?: ReadonlyMap<string, number>;
 }
 export interface SceneHooks {
   onPick(id: string | null): void;
   onDoublePick(id: string): void;
   onHover(id: string | null): void;
-  /** 끌기 · 휠 · 누르기 등 직접 조작(자동 시연 중단용) */
+  /** Direct interaction such as drag, wheel or click (stops the auto demo) */
   onInteract(): void;
   onOpeningDone(): void;
   onContextLost(): void;
 }
-/** 기본 시선 방향(원점에서 카메라 쪽) */
+/** Default view direction (from the origin toward the camera) */
 const HOME_DIR: Vec3 = [0.12, 0.42, 1];
 
-/** corner: 오른쪽 아래 구석을 가리는 도구줄(휴대폰 세로 조작 막대)의 크기(px, 캔버스 오른쪽 · 아래 가장자리부터) */
+/** corner: size of the toolbar covering the bottom-right corner (portrait phone control bar) (px, from the canvas right and bottom edges) */
 export interface Insets { top: number; right: number; bottom: number; left: number; corner?: { w: number; h: number } }
 
 const TOPIC = new THREE.Color('#FFB52E');
 const WHITE = new THREE.Color('#ffffff');
-// 발광(Points) 반지름 — 복셀 조립보다 조금 넓게
+// Glow (Points) radius — slightly wider than the voxel assembly
 const SIZE: Record<NodeKind, number> = { router: 0.075, area: 0.04, subindex: 0.028, guide: 0.028, moc: 0.036, material: 0.0132 };
 /**
- * 자동 회전(카메라가 그래프 둘레를 세로축으로 돈다).
- * OrbitControls 단위는 '60초에 autoRotateSpeed 바퀴'다. 이전 값 0.45는 한 바퀴 133초(초당 2.7°)라 눈에 거의 띄지 않았다.
+ * Auto-rotation (the camera orbits the graph around the vertical axis).
+ * OrbitControls units are 'autoRotateSpeed turns per 60 s'. The old 0.45 meant 133 s per turn (2.7°/s), barely noticeable.
  */
 export const ORBIT_TURN_S = 45;
 const ORBIT_SPEED = 60 / ORBIT_TURN_S;
-/** 직접 조작(끌기 · 휠 · 키보드 회전 · 확대 단추 · 검색 입력)이 끝나고 다시 돌기 시작할 때까지 */
+/** Delay before rotating again after direct interaction (drag, wheel, keyboard rotate, zoom buttons, search input) */
 export const ORBIT_RESUME_MS = 4000;
-/** 오프닝 끝 · 선택 해제 · 시연 종료 뒤 다시 돌기 시작할 때까지 */
+/** Delay before rotating again after the opening, deselect or demo end */
 export const ORBIT_SETTLE_MS = 1200;
-/** 회전 속도가 목표에 다가가는 시간 상수(초): 출발은 천천히, 멈춤은 빨리 */
+/** Time constants (s) for rotation speed approaching its target: slow to start, quick to stop */
 const ORBIT_EASE_IN = 0.7, ORBIT_EASE_OUT = 0.18;
 const GLOW: Record<NodeKind, number> = { router: 1.25, area: 0.95, subindex: 0.6, guide: 0.55, moc: 0.85, material: 0.4 };
 const BG = new THREE.Color('#162033');
 const IVORY = new THREE.Color('#F6F1E7');
 const BEND: Record<EdgeKind, number> = { primary: 0.12, index: 0.24, topic: 0.3 };
 const BASE_ALPHA: Record<EdgeKind, number> = { primary: 0.36, index: 0.6, topic: 0.3 };
-// 이름표 겹침 판정 여백(px)과 그리기 전 너비 추정: 한글 · 한자 등 넓은 글자는 글자 크기만큼, 나머지는 0.6배
+// Label overlap gap (px) and pre-render width estimate: wide glyphs (Hangul, CJK, etc.) count as the font size, others 0.6×
 const LABEL_GAP = 4;
 const labelEstimate = (text: string, size: number) => [...text].reduce((w, ch) => w + (ch.charCodeAt(0) >= 0x1100 ? size : size * 0.6), 0);
 const overlaps = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }, gap: number) =>
   !(a.x + a.w + gap <= b.x || b.x + b.w + gap <= a.x || a.y + a.h + gap <= b.y || b.y + b.h + gap <= a.y);
 const LABEL_RANK: Record<NodeKind, number> = { router: 2, area: 3, moc: 4, subindex: 5, guide: 6, material: 9 };
-const HALO = 2.8; // 스프라이트 = 도형 반지름 × HALO(바깥은 발광)
+const HALO = 2.8; // sprite = shape radius × HALO (outer part is glow)
 const OPEN_MS = 2900;
-/** 데이터 갱신 뒤 노드가 새 자리로 옮겨 가는 시간 */
+/** Time for nodes to move to new positions after a data update */
 const MORPH_MS = 600;
-/** 신호 꼬리 칸 수와 칸 사이 간격(곡선 비율) */
+/** Signal trail block count and spacing (fraction of the curve) */
 const TRAIL = 3;
 const TRAIL_GAP = 0.028;
 
@@ -85,8 +85,8 @@ uniform float uProj; uniform float uFar; uniform float uLift;
 varying vec3 vColor; varying float vAlpha; varying float vGlow; varying float vFog; varying float vInner;
 void main() {
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  // 발광의 깊이만 그 노드 조립의 바깥 구(반지름 aLift)만큼 카메라 쪽으로 당긴다. 카메라→노드 광선 위에서 옮기므로
-  // 화면 위치 · 크기는 그대로이고, 자기 조립 큐브에는 가리지 않되 앞에 있는 다른 노드에는 그대로 가린다(깊이 검사 유지)
+  // Pull only the glow's depth toward the camera by the node assembly's outer sphere (radius aLift). Moving along the camera→node ray keeps
+  // screen position and size unchanged; its own cubes don't hide it, but other nodes in front still do (depth test kept)
   float len = length(mv.xyz);
   vec3 eye = mv.xyz * (max(0.03, len - aLift * uLift) / max(len, 1e-4));
   gl_Position = projectionMatrix * vec4(eye, 1.0);
@@ -95,13 +95,13 @@ void main() {
   gl_PointSize = clamp(px, 1.5, 320.0);
   vColor = aColor; vAlpha = aAlpha; vGlow = aGlow;
   vFog = clamp(1.35 - dist / uFar, 0.38, 1.0);
-  // 조립 반폭(스프라이트 단위): 앞으로 당긴 발광이 자기 큐브 면을 덮지 않도록 이 안쪽은 비운다
+  // Assembly half width (sprite units): leave this inner area empty so the pulled-forward glow doesn't cover its own cube faces
   vInner = uLift > 0.5 ? aLift / (1.7320508 * max(aSize, 1e-5)) : 0.0;
 }`;
 const NODE_FRAG = /* glsl */ `
 varying vec3 vColor; varying float vAlpha; varying float vGlow; varying float vFog; varying float vInner;
 void main() {
-  // 복셀 뒤의 발광: 둥근 번짐 대신 네모에 가까운 거리 · 계단 띠(픽셀 발광). 도형은 복셀이 그린다
+  // Glow behind voxels: near-square distance and stepped bands instead of a round blur (pixel glow). Voxels draw the shape
   vec2 p = (gl_PointCoord - 0.5) * 2.0 * ${HALO.toFixed(1)};
   float r = mix(length(p), max(abs(p.x), abs(p.y)), 0.65);
   float halo = exp(-r * r * 0.32) * vGlow * 0.42;
@@ -131,7 +131,7 @@ void main() {
   gl_PointSize = clamp(aSize * uProj / max(0.05, -mv.z), 1.0, 24.0);
   vColor = aColor; vAlpha = aAlpha * uFade;
 }`;
-// 신호 · 오프닝 입자: 네모 픽셀(밝은 속 + 옅은 테두리)
+// Signal and opening particles: square pixels (bright core + faint border)
 const DOT_FRAG = /* glsl */ `
 varying vec3 vColor; varying float vAlpha;
 void main() {
@@ -141,7 +141,7 @@ void main() {
   if (a < 0.004) discard;
   gl_FragColor = vec4(mix(vColor, vec3(1.0), 0.35), a);
 }`;
-// 복셀: 노드 중심(aCenter) + 조각 위치(aOffset) + 정육면체(position × aSize), 노드 크기(aScale)로 함께 자란다
+// Voxels: node center (aCenter) + piece offset (aOffset) + cube (position × aSize), all scaled by node size (aScale)
 const VOX_VERT = /* glsl */ `
 attribute vec3 aCenter; attribute vec3 aOffset; attribute float aSize; attribute float aScale;
 attribute vec3 aColor; attribute float aAlpha; attribute float aGlow; attribute float aTone; attribute float aHollow;
@@ -155,7 +155,7 @@ void main() {
   vUv = uv; vColor = aColor; vAlpha = aAlpha; vGlow = aGlow; vTone = aTone; vHollow = aHollow;
   vFog = clamp(1.35 - (-mv.z) / uFar, 0.38, 1.0);
 }`;
-// 면 밝기: 윗면 > 빛 쪽 옆면 > 그늘 옆면 > 아랫면. 모서리 띠는 밝게(격자), 흐린 노드는 지면 색으로 물러난다(불투명 · 깊이 기록)
+// Face brightness: top > lit side > shaded side > bottom. Edge bands are bright (grid); dimmed nodes fade to the ground color (opaque, depth written)
 const VOX_FRAG = /* glsl */ `
 uniform vec3 uBg; uniform vec3 uLight;
 varying vec3 vN; varying vec2 vUv; varying vec3 vColor; varying float vAlpha; varying float vGlow; varying float vFog; varying float vTone; varying float vHollow;
@@ -171,7 +171,7 @@ void main() {
   if (vHollow > 0.5) col = mix(uBg * 1.3 + vColor * 0.06, col, rim);
   gl_FragColor = vec4(mix(uBg, col, clamp(vAlpha * vFog, 0.0, 1.0)), 1.0);
 }`;
-// 바닥 격자면: 복셀 칸의 네 배 간격 가는 선 + 다섯 칸마다 굵은 선, 가운데서 멀어지면 사라진다
+// Floor grid: thin lines every four voxel cells + thick lines every five, fading away from the center
 const FLOOR_VERT = /* glsl */ `varying vec3 vW; void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const FLOOR_FRAG = /* glsl */ `
 uniform float uCell; uniform float uFade; varying vec3 vW;
@@ -188,7 +188,7 @@ varying vec2 vUv; uniform vec2 uAspect;
 void main() {
   vec2 p = (vUv - 0.5) * uAspect;
   float r = length(p);
-  // 테마 지면: 가운데 Navy 800(#162033)에서 가장자리 Navy 950(#0B1220)로. 좌우 반구 쪽에 슬레이트 · 아이보리의 아주 옅은 기운
+  // Theme ground: Navy 800 (#162033) at the center to Navy 950 (#0B1220) at the edges, with a very faint slate/ivory tint on each hemisphere side
   vec3 base = mix(vec3(0.086, 0.125, 0.200), vec3(0.043, 0.071, 0.125), smoothstep(0.0, 0.95, r));
   base += vec3(0.80, 0.84, 0.88) * 0.022 * exp(-dot(p + vec2(0.28, 0.0), p + vec2(0.28, 0.0)) * 5.0);
   base += vec3(0.96, 0.94, 0.90) * 0.020 * exp(-dot(p - vec2(0.3, 0.05), p - vec2(0.3, 0.05)) * 5.0);
@@ -206,15 +206,15 @@ export class BrainScene {
   private controls: OrbitControls;
   private nodeGeo = new THREE.BufferGeometry();
   private nodeMat: THREE.ShaderMaterial;
-  /** 발광 겹 + 누르기 판정(노드 하나에 점 하나) */
+  /** Glow layer + hit testing (one point per node) */
   private points: THREE.Points;
   private voxGeo = new THREE.InstancedBufferGeometry();
   private voxMat: THREE.ShaderMaterial;
-  /** 조각 → 노드 번호. 조각 수(그리기 단위)와 노드 수(문서 수)는 다르다 */
+  /** Piece → node index. Piece count (draw units) differs from node count (documents) */
   private pieceNode: Uint32Array;
-  /** 노드별 조립 반 너비 */
+  /** Assembly half width per node */
   private half: Float32Array;
-  /** 오프닝 동안 자라 나오는 비율(끝나면 1) */
+  /** Grow-in ratio during the opening (1 when done) */
   private grow: Float32Array;
   private centerVersion = -1;
   private floorMat: THREE.ShaderMaterial;
@@ -231,16 +231,16 @@ export class BrainScene {
 
   private nodes: SceneNodeInput[];
   private index = new Map<string, number>();
-  /** 라우터 노드 번호(-1 = 없음): 중앙 조립 화면 원 예약용 */
+  /** Router node index (-1 = none): reserves the central assembly's screen circle */
   private routerIndex = -1;
   private edges: SceneEdgeInput[];
   private edgeIndex = new Map<string, number>();
   private K: number;
-  /** 선이 많을수록(더해 그리는 선이 겹쳐 하얗게 뜨지 않게) 기본 밝기를 낮춘다. 주제 연결(금색)은 한 번 더 낮춘다 */
+  /** More lines → lower base brightness (so additive lines don't wash out white). Topic links (gold) are lowered once more */
   private density: number;
-  private curve: Float32Array; // 선마다 A · C · B
+  private curve: Float32Array; // A · C · B per line
   private nodeColor: THREE.Color[];
-  // 상태(현재 · 목표)
+  // State (current · target)
   private nAlpha: Float32Array; private nAlphaT: Float32Array;
   private nScale: Float32Array; private nScaleT: Float32Array;
   private nGlow: Float32Array; private nGlowT: Float32Array;
@@ -250,27 +250,27 @@ export class BrainScene {
   private state: SceneState = { visible: new Set(), shown: new Map(), emphasis: null, selected: null, hover: null };
   private prevVisible: ReadonlySet<string> = new Set();
   private prevShown!: Uint8Array;
-  /** 전체 보기 거리를 정할 때 빼는 가장자리(상세 패널처럼 잠깐 열리는 것은 빼지 않는다) */
+  /** Edges excluded when fitting the view (temporary ones like the detail panel aren't excluded) */
   private fitInsets: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
-  /** 사용자가 아직 확대 · 끌기 · 초점 이동을 하지 않아 카메라가 전체 보기 거리에 있다(창 크기 · 가장자리가 바뀌면 거리를 다시 맞춘다) */
+  /** The user hasn't zoomed, dragged or focused yet, so the camera is at fit distance (refit on window or edge changes) */
   private atHome = true;
   private insetsSet = false;
-  /** 가장자리로 정한 화면 치우침, 구석 막대가 있을 때 투영 중심을 위로 올린 양(px) — 실제 목표 치우침은 둘의 합 */
+  /** View offset from edges, and how far the projection center is raised for a corner bar (px) — the target offset is their sum */
   private baseOffset = { x: 0, y: 0 };
   private cornerLift = 0;
 
   private raf = 0; private inFrame = false; private last = 0; private time = 0;
   private paused = false; private reduced = false; private autoRotate = true;
-  /** 자동 회전 상태: factor = 목표 속도 대비 지금 속도(0~1), holdUntil = 이 시각까지 쉰다, dragging = 직접 조작 중 */
+  /** Auto-rotation state: factor = current/target speed (0–1), holdUntil = paused until this time, dragging = direct interaction */
   private rot = { factor: 0, holdUntil: 0, dragging: false, timer: 0 };
-  private opening = 1; // 1 = 끝
+  private opening = 1; // 1 = done
   private openStart = 0;
-  // 데이터 갱신 뒤 이전 자리 → 새 자리로 옮겨 가는 전환(선택 노드는 카메라가 같이 움직여 화면 자리를 지킨다)
+  // Transition from old to new positions after a data update (the camera follows the selected node to keep its screen spot)
   private morph: { start: number; from: Float32Array; delta: THREE.Vector3; done: number } | null = null;
   private fitDistance = 3;
-  /** 노드 초점 · 자료 이름표 기준 거리(배치 반지름 기준 — 전체 보기 거리와 따로 둬 선택 시 확대 정도가 화면 가장자리에 따라 바뀌지 않게) */
+  /** Reference distance for node focus and material labels (from layout radius — kept apart from fit distance so selection zoom doesn't depend on screen edges) */
   private nearDistance = 3;
-  /** 배치가 차지하는 반지름(98% 지점) — 화면을 채우는 카메라 거리 기준 */
+  /** Radius covered by the layout (98th percentile) — basis for the screen-filling camera distance */
   private extent = 1;
   private camAnim: { from: THREE.Vector3; to: THREE.Vector3; fromDist: number; toDist: number; t: number; dur: number } | null = null;
   private offset = { x: 0, y: 0 }; private offsetT = { x: 0, y: 0 };
@@ -279,15 +279,15 @@ export class BrainScene {
   private hoverPending: { x: number; y: number } | null = null;
   private labels: HTMLDivElement[] = [];
   private labelWidth = new Map<string, number>();
-  /** 노드별 직전 중심선 기준 방향(데드밴드) */
+  /** Previous side relative to the center line per node (dead band) */
   private labelSide = new Map<string, boolean>();
-  /** 노드별 이름표 시간 안정화 상태(보임 · 놓은 쪽 · 시각). 이번 프레임 후보가 아니면(숨김 · 삭제 · 화면 밖 · 끔) 바로 지운다 */
+  /** Per-node label stabilization state (shown, side, times). Cleared immediately when not a candidate this frame (hidden, deleted, off screen, off) */
   private labelHold = new Map<string, LabelHold>();
-  /** 다음 이름표 계산은 대기 없이 바로(이름표 켬 · 상태 · 크기 바뀜 직후) */
+  /** Next label pass places without waiting (right after labels on, state or size change) */
   private labelFresh = true;
-  /** 직전 프레임에 보인 이름표: 같은 순위끼리는 먼저 자리를 잡아, 회전 중 이름표끼리 번갈아 숨었다 나타나지 않게 한다 */
+  /** Labels shown last frame: they claim spots first among equal rank, so labels don't take turns hiding while rotating */
   private labelShown = new Set<string>();
-  /** 장면 이름표 표시(글자 켬/끔). 끄면 선택 · 가리킴 · 시연 이름표까지 숨긴다 */
+  /** Scene labels on/off. Off also hides selection, hover and demo labels */
   private labelsOn = true;
   private frameTimes: number[] = [];
   private frameCount = 0;
@@ -301,7 +301,7 @@ export class BrainScene {
     const coarse = matchMedia('(pointer: coarse)').matches;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, big || coarse ? 1.5 : 2));
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.02, 50);
-    // 노드 자리를 복셀 격자에 맞춘다(이후 선 · 신호 · 이름표 · 누르기 · 갱신 이어 받기가 모두 이 자리를 쓴다)
+    // Snap node positions to the voxel grid (lines, signals, labels, hit testing and update handoff all use these)
     const snapped = snapToGrid(nodes);
     nodes = nodes.map((n, i) => ({ ...n, pos: snapped[i] }));
     this.nodes = nodes; this.edges = edges;
@@ -315,13 +315,13 @@ export class BrainScene {
     this.reduced = options.reducedMotion;
     this.paused = options.paused;
 
-    // 배경
+    // Background
     this.bgMat = new THREE.ShaderMaterial({ vertexShader: BG_VERT, fragmentShader: BG_FRAG, uniforms: { uAspect: { value: new THREE.Vector2(1, 1) } }, depthTest: false, depthWrite: false });
     const bg = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.bgMat);
     bg.frustumCulled = false; bg.renderOrder = -10;
     this.scene.add(bg, this.root);
 
-    // 노드
+    // Nodes
     const N = nodes.length;
     this.nodeColor = nodes.map(n => new THREE.Color(n.color));
     const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), size = new Float32Array(N);
@@ -347,7 +347,7 @@ export class BrainScene {
     this.points.renderOrder = 4;
     this.points.frustumCulled = false;
 
-    // 복셀 조각(인스턴싱 한 번): 노드마다 종류별 조립 형태
+    // Voxel pieces (one instanced draw): per-kind assembly for each node
     const box = new THREE.BoxGeometry(1, 1, 1);
     this.voxGeo.index = box.index;
     for (const name of ['position', 'normal', 'uv']) this.voxGeo.setAttribute(name, box.getAttribute(name));
@@ -381,7 +381,7 @@ export class BrainScene {
     const voxels = new THREE.Mesh(this.voxGeo, this.voxMat);
     voxels.frustumCulled = false; voxels.renderOrder = 1;
 
-    // 바닥 격자면(장식) · 선택 테두리(조립을 감싸는 정육면체 모서리)
+    // Floor grid (decor) · selection outline (cube edges around the assembly)
     this.floorMat = new THREE.ShaderMaterial({ vertexShader: FLOOR_VERT, fragmentShader: FLOOR_FRAG, transparent: true, depthWrite: false,
       blending: THREE.AdditiveBlending, uniforms: { uCell: { value: CELL * 4 }, uFade: { value: 1 } } });
     this.floor = new THREE.Mesh(new THREE.PlaneGeometry(5, 5).rotateX(-Math.PI / 2), this.floorMat);
@@ -390,7 +390,7 @@ export class BrainScene {
       new THREE.LineBasicMaterial({ color: IVORY, transparent: true, opacity: 0.9, depthTest: false }));
     this.cage.visible = false; this.cage.renderOrder = 5; this.cage.frustumCulled = false;
 
-    // 선(곡선)
+    // Lines (curves)
     const E = edges.length, K = this.K;
     this.curve = new Float32Array(E * 9);
     const lpos = new Float32Array(E * K * 2 * 3), lcol = new Float32Array(E * K * 2 * 3), lalpha = new Float32Array(E * K * 2);
@@ -413,8 +413,8 @@ export class BrainScene {
     const lines = new THREE.LineSegments(this.lineGeo, this.lineMat);
     lines.frustumCulled = false; lines.renderOrder = 2;
 
-    // 신호(선을 따라 흐르는 빛) — 관계를 보여 주는 연출이며 실제 활동을 뜻하지 않는다
-    // 신호 하나 = 픽셀 블록 세 칸(앞 칸이 가장 밝고 크다)
+    // Signals (light flowing along lines) — a visual for relations, not real activity
+    // One signal = three pixel blocks (the front one is brightest and largest)
     const S = Math.min(big ? 90 : 160, Math.max(24, E));
     for (let i = 0; i < S; i++) this.signals.push({ edge: -1, phase: hash(`s${i}`), speed: 0.18 + 0.22 * hash(`v${i}`) });
     const sigSize = new Float32Array(S * TRAIL);
@@ -428,7 +428,7 @@ export class BrainScene {
     const sig = new THREE.Points(this.sigGeo, this.sigMat);
     sig.frustumCulled = false; sig.renderOrder = 3;
 
-    // 오프닝 장식 입자(뇌 형상). 검색 · 개수 · 선택 대상이 아니다
+    // Opening decor particles (brain shape). Not searchable, counted or selectable
     const brain = options.dust;
     const dustCount = brain.length;
     const dust = new Float32Array(dustCount * 3), dustCol = new Float32Array(dustCount * 3), dustA = new Float32Array(dustCount), dustS = new Float32Array(dustCount);
@@ -450,7 +450,7 @@ export class BrainScene {
     dustPoints.frustumCulled = false; dustPoints.renderOrder = 0;
     this.root.add(dustPoints, this.floor, voxels, lines, sig, this.points, this.cage);
 
-    // 카메라 · 조작
+    // Camera · controls
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
@@ -472,14 +472,14 @@ export class BrainScene {
     this.request();
   }
 
-  /* ── 공개 API ── */
+  /* ── Public API ── */
   setState(next: SceneState) {
     this.state = next;
     this.labelFresh = true;
     const N = this.nodes.length;
     const { visible, emphasis, selected, hover } = next;
     const folded = next.folded;
-    // 덩어리 방식(큰 그래프)에서는 감춘 노드를 크기 0으로 지운다. 복셀은 불투명이라 흐리게 두면 배경색 칸이 되어 덩어리를 가린다(투명도 0.05 미만은 누를 수도 없다)
+    // In cluster mode (large graphs) hidden nodes shrink to size 0. Voxels are opaque, so dimmed ones become background-colored cells covering clusters (and alpha below 0.05 isn't clickable)
     const ghostAlpha = folded ? 0 : 0.2, ghostScale = folded ? 0 : 0.42;
     const neighbors = new Set<string>();
     this.edges.forEach((e, i) => {
@@ -503,7 +503,7 @@ export class BrainScene {
         else { alpha *= 0.3; glow *= 0.25; }
       }
       if (hover === n.id) { scale *= 1.3; alpha = Math.max(alpha, 0.9); glow = Math.max(glow, 1.1); }
-      // 새로 보이는 노드(펼침)는 작게 시작해 자라 나온다. 선택 · 필터로 흐려졌다 돌아오는 경우는 아니다
+      // Newly visible nodes (expand) start small and grow in. Not for nodes returning from selection or filter dimming
       if (vis && !this.prevVisible.has(n.id) && this.opening >= 1 && !this.still) this.nScale[i] = Math.min(this.nScale[i], 0.2);
       this.nAlphaT[i] = alpha; this.nScaleT[i] = scale; this.nGlowT[i] = glow;
     }
@@ -531,7 +531,7 @@ export class BrainScene {
     this.request();
   }
 
-  /** immediate: 데이터 갱신으로 다시 만든 장면은 화면 치우침을 미끄러지듯 옮기지 않고 바로 맞춘다 */
+  /** immediate: a scene rebuilt by a data update sets the view offset at once instead of sliding */
   setInsets(insets: Insets, immediate = false) {
     const base = { x: (insets.right - insets.left) / 2, y: (insets.bottom - insets.top) / 2 };
     const corner = insets.corner && insets.corner.w > 0 && insets.corner.h > 0 ? { w: Math.round(insets.corner.w), h: Math.round(insets.corner.h) } : undefined;
@@ -542,12 +542,12 @@ export class BrainScene {
     this.baseOffset = base;
     if (changed) { this.fitInsets = fitInsets; this.refit(); }
     this.offsetT = { x: base.x, y: base.y + this.cornerLift };
-    // 첫 가장자리는 바로 맞춘다(첫 구도가 미끄러지는 동안 누르면 엇나간다). 이후 상세 패널 등으로 바뀔 때만 미끄러진다
+    // Apply the first edges immediately (clicks miss while the first framing slides). Later changes, e.g. the detail panel, slide
     if (this.still || immediate || !this.insetsSet) { this.offset = { ...this.offsetT }; this.applyOffset(); }
     this.insetsSet = true;
     this.request();
   }
-  /** 장면 이름표 켬/끔: 장면 · 카메라 · 모션 상태는 그대로 두고 이름표 층만 바꾼다(정지 · 동작 줄이기에서도 한 프레임만 다시 그림) */
+  /** Scene labels on/off: changes only the label layer, leaving scene, camera and motion as is (redraws one frame even when paused or reduced motion) */
   setLabels(on: boolean) {
     if (this.labelsOn === on) return;
     this.labelsOn = on;
@@ -556,7 +556,7 @@ export class BrainScene {
     this.labelFresh = true;
     this.request();
   }
-  /** 검증용(?perf=1): 발광 깊이 비교. lift = 기본(자기 조립 앞으로), raw = 이전(노드 중심 깊이), off = 깊이 검사 없음, none = 발광 숨김 */
+  /** For verification (?perf=1): compare glow depth. lift = default (in front of own assembly), raw = old (node center depth), off = no depth test, none = hide glow */
   debugGlowDepth(mode: GlowDepthMode) {
     (this.nodeMat.uniforms.uLift as { value: number }).value = mode === 'lift' ? 1 : 0;
     this.nodeMat.depthTest = mode !== 'off';
@@ -573,7 +573,7 @@ export class BrainScene {
     this.autoRotate = on;
     this.request();
   }
-  /** 자동 회전을 지금 멈추고 ms 뒤에 다시 천천히 시작한다(그사이에는 프레임을 돌리지 않고 타이머만 둔다) */
+  /** Stop auto-rotation now and slowly restart after ms (only a timer runs meanwhile, no frames) */
   holdRotation(ms = ORBIT_RESUME_MS) {
     this.rot.factor = 0;
     this.rot.holdUntil = Math.max(this.rot.holdUntil, performance.now() + ms);
@@ -581,7 +581,7 @@ export class BrainScene {
     this.rot.timer = window.setTimeout(() => this.request(), Math.max(0, this.rot.holdUntil - performance.now()) + 16);
     this.request();
   }
-  /** 자동 회전 상태(검증 · 보고용) */
+  /** Auto-rotation state (for verification and reporting) */
   rotation() {
     const allowed = this.autoRotate && !this.paused && !this.reduced && this.opening >= 1;
     const now = performance.now();
@@ -596,7 +596,7 @@ export class BrainScene {
   skipOpening() { if (this.opening < 1) this.finishOpening(true); }
   get openingProgress() { return this.opening; }
 
-  /** 고른 문서 쪽으로 카메라를 옮긴다(패널 자리는 화면 중심 보정으로 비켜 둔다) */
+  /** Move the camera toward the picked document (the panel area is avoided via the screen center offset) */
   focus(id: string) {
     const i = this.index.get(id);
     if (i === undefined) return;
@@ -607,7 +607,7 @@ export class BrainScene {
     this.animateCamera(target, dist);
   }
   fit() { this.atHome = true; this.animateCamera(new THREE.Vector3(0, 0, 0), this.fitDistance); }
-  /** 데이터 갱신으로 장면을 다시 만들 때 카메라를 그대로 잇기 위한 현재 시점 */
+  /** Current viewpoint, to carry the camera over when a data update rebuilds the scene */
   getView(): { pos: number[]; target: number[] } { return { pos: this.camera.position.toArray(), target: this.controls.target.toArray() }; }
   setView(view: { pos: number[]; target: number[] }) {
     this.camAnim = null;
@@ -619,7 +619,7 @@ export class BrainScene {
     this.request();
   }
 
-  /** 진행 중인 카메라 이동을 지금 자리에서 멈춘다(검색 시작 · 직접 조작 · 시연 중단) */
+  /** Stop any camera move where it is (search start, direct interaction, demo stop) */
   cancelCamera() {
     this.camAnim = null;
     this.stopMomentum();
@@ -627,7 +627,7 @@ export class BrainScene {
     this.applyOffset();
     this.request();
   }
-  /** 끌기 · 자동 회전 뒤 남은 감쇠 관성을 지금 자리에서 끝낸다(남은 아주 작은 회전량은 한 번에 적용) */
+  /** End leftover damping inertia from drag or auto-rotation now (the tiny remaining rotation is applied at once) */
   private stopMomentum() {
     const damping = this.controls.enableDamping, auto = this.controls.autoRotate;
     this.controls.enableDamping = false;
@@ -642,7 +642,7 @@ export class BrainScene {
     this.holdRotation();
     this.animateCamera(this.controls.target.clone(), dist);
   }
-  /** 키보드 회전(라디안) */
+  /** Keyboard rotation (radians) */
   orbit(dTheta: number, dPhi: number) {
     this.holdRotation();
     const off = this.camera.position.clone().sub(this.controls.target);
@@ -654,15 +654,15 @@ export class BrainScene {
     this.camAnim = null;
     this.request();
   }
-  /** 지금 그려진 노드 자리(전환 중이면 중간 자리). 다음 장면이 이어 받는다 */
+  /** Currently drawn node positions (intermediate during a transition). The next scene takes them over */
   positions(): Map<string, Vec3> {
     const pos = this.nodeGeo.getAttribute('position') as THREE.BufferAttribute;
     return new Map(this.nodes.map((n, i) => [n.id, [pos.getX(i), pos.getY(i), pos.getZ(i)] as Vec3]));
   }
   /**
-   * 갱신 이어 받기: 남아 있는 노드는 이전 자리에서 새 자리로 옮겨 간다(새 노드는 제자리).
-   * anchor(선택 노드)가 있으면 카메라를 그 노드의 이동만큼 함께 옮겨, 선택 노드가 화면에서 같은 자리에 머문다.
-   * 정지 · 동작 줄이기 · 오프닝 중에는 바로 최종 상태(카메라 이동만 즉시)로 둔다.
+   * Update handoff: remaining nodes move from old to new positions (new nodes appear in place).
+   * With an anchor (selected node) the camera moves by that node's shift, so it stays at the same screen spot.
+   * When paused, in reduced motion or during the opening, jump to the final state (camera moves instantly).
    */
   morphFrom(prev: Map<string, Vec3>, anchor: string | null) {
     const from = new Float32Array(this.nodes.length * 3);
@@ -710,7 +710,7 @@ export class BrainScene {
     const t = this.still ? 1 : Math.min(1, (now - m.start) / MORPH_MS);
     const e = ease(t);
     this.setNodePositions(e);
-    // 카메라는 직전 프레임에서 늘어난 만큼만 더한다(사용자가 그 사이 돌리거나 확대해도 함께 쓰인다)
+    // Add only the camera delta since the last frame (so user rotation or zoom in between still applies)
     const step = m.delta.clone().multiplyScalar(e - m.done);
     m.done = e;
     this.camera.position.add(step); this.controls.target.add(step);
@@ -718,7 +718,7 @@ export class BrainScene {
     return true;
   }
 
-  /** 화면 좌표(캔버스 기준)의 노드 위치 — 검증 · 툴팁용 */
+  /** Node position in screen coordinates (canvas) — for verification and tooltips */
   screenOf(id: string): { x: number; y: number } | null {
     const i = this.index.get(id);
     if (i === undefined) return null;
@@ -748,13 +748,13 @@ export class BrainScene {
     for (const l of this.labels) l.remove();
   }
 
-  /* ── 내부: 기하 ── */
+  /* ── Internal: geometry ── */
   private controlPoint(A: Vec3, B: Vec3, e: SceneEdgeInput): Vec3 {
     const ab = new THREE.Vector3(B[0] - A[0], B[1] - A[1], B[2] - A[2]);
     const len = ab.length() || 1e-6;
     const axis = ab.clone().divideScalar(len);
     const mid = new THREE.Vector3((A[0] + B[0]) / 2, (A[1] + B[1]) / 2, (A[2] + B[2]) / 2);
-    // 가운데에서 바깥으로 부푼 방향(유기적인 호), 쌍마다 축을 따라 조금 비튼다
+    // Bulge outward from the center (organic arc), twisted slightly along the axis per pair
     let n = mid.clone().sub(axis.clone().multiplyScalar(mid.dot(axis)));
     if (n.lengthSq() < 1e-6) n = new THREE.Vector3(0, 1, 0).cross(axis);
     if (n.lengthSq() < 1e-6) n = new THREE.Vector3(1, 0, 0);
@@ -772,7 +772,7 @@ export class BrainScene {
     return new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(this.root.matrixWorld);
   }
 
-  /* ── 내부: 카메라 ── */
+  /* ── Internal: camera ── */
   private resize() {
     const w = Math.max(1, this.canvas.clientWidth), h = Math.max(1, this.canvas.clientHeight);
     if (w === this.width && h === this.height && this.renderer.getSize(new THREE.Vector2()).x === w) return;
@@ -787,8 +787,8 @@ export class BrainScene {
     this.refit();
   }
   /**
-   * 전체 보기 거리: 기본 시선에서 자동 회전 한 바퀴 동안 모든 노드 조립이 상단바 · 도구줄 · 범례를 뺀 안전 영역 안에 들도록.
-   * 카메라가 아직 전체 보기에 있으면(사용자 조작 · 초점 이동 전) 지금 방향 그대로 거리만 맞춘다.
+   * Fit distance: every node assembly stays inside the safe area (minus top bar, toolbar and legend) through one auto-rotation turn from the default view.
+   * If the camera is still at the fit view (before user interaction or focus), only the distance is adjusted along the current direction.
    */
   private refit() {
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
@@ -798,8 +798,8 @@ export class BrainScene {
     const input = { points: this.nodes.map(n => n.pos), halves: this.half, dir: HOME_DIR, vfov, width: this.width, height: this.height, insets: ins };
     let lift = 0;
     if (ins.corner) {
-      // 휴대폰 세로 조작 막대: 막대 사각형 밑에 노드가 깔리지 않는 거리. 위아래에 남는 높이가 있으면 투영 중심을 조금 올려(막대에서 멀어지게)
-      // 신경망이 덜 작아지는 자리를 고른다(8px 간격, 남는 높이의 절반까지). 고를 때는 표본 각도를 줄이고 마지막 한 번만 원래대로 잰다
+      // Portrait phone control bar: a distance where no node sits under the bar. If there's spare height, raise the projection center a bit (away from the bar)
+      // to keep the network larger (8px steps, up to half the spare height). Search with fewer sample angles, then measure once at full resolution
       const spare = Math.max(0, (this.height - ins.top - ins.bottom) - (this.width - ins.left - ins.right)) / 2;
       let best = Infinity;
       for (let s = 0; s <= Math.min(spare, this.height * 0.15); s += 8) {
@@ -818,7 +818,7 @@ export class BrainScene {
     }
     this.controls.minDistance = 0.55;
     this.controls.maxDistance = this.fitDistance * 2.2;
-    // 아직 그리기 전(카메라 자리 없음)이면 home이 놓는다. 첫 가장자리 · 정지 · 동작 줄이기는 바로, 그 밖(범례 접기 · 창 크기)은 부드럽게 거리만 맞춘다
+    // Before the first draw (no camera position) home places it. First edges, paused and reduced motion apply at once; others (legend collapse, resize) ease the distance only
     if (this.atHome && this.camera.position.lengthSq() > 1e-9) {
       const cur = this.camAnim ? this.camAnim.toDist : this.camera.position.distanceTo(this.controls.target);
       if (Math.abs(cur - this.fitDistance) > 1e-4) {
@@ -842,9 +842,9 @@ export class BrainScene {
       this.camera.lookAt(0, 0, 0);
     } else this.fit();
   }
-  /** 정적인가: 정지 · 동작 줄이기에서는 카메라 · 화면 중심 · 밝기 전환을 애니메이션 없이 바로 끝낸다 */
+  /** Static: when paused or in reduced motion, camera, screen center and brightness changes finish instantly */
   private get still() { return this.paused || this.reduced; }
-  /** 진행 중인 움직임을 즉시 최종 상태로 */
+  /** Jump any ongoing motion to its final state */
   private settle() {
     if (this.camAnim) {
       const a = this.camAnim;
@@ -870,7 +870,7 @@ export class BrainScene {
     this.request();
   }
 
-  /* ── 내부: 오프닝 ── */
+  /* ── Internal: opening ── */
   private startOpening() {
     this.opening = 0;
     this.openStart = performance.now();
@@ -908,13 +908,13 @@ export class BrainScene {
     this.nodes.forEach((n, i) => {
       const local = ease(smooth(0.28 + Math.min(n.depth, 5) * 0.05, 0.86 + Math.min(n.depth, 5) * 0.02, t));
       pos.setXYZ(i, n.brain[0] + (n.pos[0] - n.brain[0]) * local, n.brain[1] + (n.pos[1] - n.brain[1]) * local, n.brain[2] + (n.pos[2] - n.brain[2]) * local);
-      // 흩어진 작은 조각이 제자리에 닿으며 제 크기로 자란다
+      // Scattered small pieces grow to full size as they reach their spots
       this.grow[i] = 0.3 + 0.7 * local;
     });
     pos.needsUpdate = true;
     this.writeNodes();
     this.floorMat.uniforms.uFade.value = smooth(0.35, 0.95, t);
-    // 뇌 형상 입자: 모였다가 바깥으로 풀리며 사라진다
+    // Brain-shaped particles: gather, then unravel outward and fade
     this.dustMat.uniforms.uFade.value = smooth(0, 0.18, t) * (1 - smooth(0.42, 0.84, t));
     const dpos = this.dustGeo.getAttribute('position') as THREE.BufferAttribute, base = this.dustGeo.userData.base as Float32Array;
     const k = 1 + 0.35 * smooth(0.4, 1, t);
@@ -924,7 +924,7 @@ export class BrainScene {
     return true;
   }
 
-  /* ── 내부: 신호 ── */
+  /* ── Internal: signals ── */
   private assignSignals() {
     const shown: number[] = [], lit: number[] = [];
     this.eShown.forEach((s, i) => { if (s) { shown.push(i); if (this.eLit[i]) lit.push(i); } });
@@ -957,7 +957,7 @@ export class BrainScene {
     return active;
   }
 
-  /* ── 내부: 상태 전환 ── */
+  /* ── Internal: state transitions ── */
   private snap() {
     this.nAlpha.set(this.nAlphaT); this.nScale.set(this.nScaleT); this.nGlow.set(this.nGlowT);
     this.eAlpha.set(this.eAlphaT); this.eGrow.fill(1);
@@ -991,13 +991,13 @@ export class BrainScene {
     const lift = this.nodeGeo.getAttribute('aLift') as THREE.BufferAttribute;
     for (let i = 0; i < this.nodes.length; i++) {
       a.setX(i, this.nAlpha[i]); s.setX(i, base[i] * this.nScale[i] * this.grow[i]); g.setX(i, this.nGlow[i]);
-      // 발광을 당길 거리 = 조립의 바깥 구 반지름(가장 먼 모서리까지)
+      // Glow pull distance = the assembly's outer sphere radius (to the farthest corner)
       lift.setX(i, assemblyRadius(this.half[i], this.nScale[i] * this.grow[i]));
     }
     a.needsUpdate = true; s.needsUpdate = true; g.needsUpdate = true; lift.needsUpdate = true;
     this.writeVoxels();
   }
-  /** 노드 상태(밝기 · 크기 · 발광 · 자라남)를 그 노드의 모든 조각에 옮긴다 */
+  /** Copy node state (brightness, size, glow, grow-in) to all of its pieces */
   private writeVoxels() {
     const sc = this.voxGeo.getAttribute('aScale') as THREE.InstancedBufferAttribute, al = this.voxGeo.getAttribute('aAlpha') as THREE.InstancedBufferAttribute;
     const gl = this.voxGeo.getAttribute('aGlow') as THREE.InstancedBufferAttribute;
@@ -1007,7 +1007,7 @@ export class BrainScene {
     }
     sc.needsUpdate = true; al.needsUpdate = true; gl.needsUpdate = true;
   }
-  /** 노드 자리(오프닝 · 갱신 전환 중이면 중간 자리)가 바뀌었으면 조각 중심을 따라 옮긴다 */
+  /** If node positions changed (intermediate during opening or update transitions), move piece centers with them */
   private syncCenters() {
     const pos = this.nodeGeo.getAttribute('position') as THREE.BufferAttribute;
     if (pos.version === this.centerVersion) return;
@@ -1016,7 +1016,7 @@ export class BrainScene {
     for (let p = 0; p < this.pieceNode.length; p++) { const i = this.pieceNode[p]; c.setXYZ(p, pos.getX(i), pos.getY(i), pos.getZ(i)); }
     c.needsUpdate = true;
   }
-  /** 선택 테두리: 선택 노드의 조립을 감싸는 정육면체 모서리(움직일 수 있으면 아주 천천히 숨 쉬듯) */
+  /** Selection outline: cube edges around the selected node's assembly (slowly breathing when motion is allowed) */
   private updateCage() {
     const i = this.state.selected ? this.index.get(this.state.selected) : undefined;
     this.cage.visible = i !== undefined && this.opening >= 1;
@@ -1041,8 +1041,8 @@ export class BrainScene {
     al.needsUpdate = true;
   }
 
-  /* ── 내부: 이름표(겹침 제어) ── */
-  /** settle: 이 프레임 뒤에 이어 그릴 것이 없다(움직임이 멈춘 마지막 프레임 · 정지 · 동작 줄이기의 한 번 그리기) — 유지 시간 없이 바로 자리를 정한다 */
+  /* ── Internal: labels (overlap control) ── */
+  /** settle: nothing is drawn after this frame (last frame after motion stops, or the single draw when paused or reduced motion) — place labels without hold time */
   private updateLabels(settle: boolean) {
     if (!this.labelsOn) return;
     const { visible, selected, hover, emphasis } = this.state;
@@ -1068,8 +1068,8 @@ export class BrainScene {
     const was = this.labelShown;
     cands.sort((a, b) => a.rank - b.rank || +was.has(this.nodes[b.i].id) - +was.has(this.nodes[a.i].id) || a.z - b.z);
     const now = performance.now();
-    // 시간 안정화는 계속 움직이는 동안만 쓴다. 움직임이 멈추면 기다리던 이름표 · 버티던 겹침을 그 프레임에 바로 정해, 정지 화면에 타이머나 추가 프레임이 필요 없다.
-    // 상태가 바뀐 직후(켬 · 선택 · 가리킴 · 데이터 · 크기)에는 새 이름표만 기다리지 않고, 이미 보이던 이름표의 버팀 · 잠금은 그대로 둔다
+    // Temporal stabilization applies only while moving. When motion stops, waiting labels and held overlaps resolve that frame, so a still view needs no timer or extra frames.
+    // Right after a state change (on, select, hover, data, size) only new labels skip the wait; already shown labels keep their hold and lock
     const pace: LabelPace = settle ? 'settle' : this.labelFresh ? 'show' : 'hold';
     this.labelFresh = false;
     const shownNow = new Set<string>();
@@ -1078,14 +1078,14 @@ export class BrainScene {
     let used = 0;
     const limit = this.width < 720 ? 22 : 46;
     const ins = this.fitInsets;
-    // 라우터 조립의 화면 원(조립 바깥 구 반지름의 투영 + 3px): 다른 이름표는 이 위에 놓지 않는다(회전 중 중앙 조립 위로 이름표가 나타났다 사라지며 번쩍이지 않게)
+    // Router assembly's screen circle (projected outer sphere radius + 3px): no other label goes on it (so labels don't flash over the central assembly while rotating)
     const reserve = this.routerReserve(v);
     const hits = (b: { x: number; y: number; w: number; h: number }) => {
       if (!reserve) return false;
       const qx = Math.min(Math.max(reserve.x, b.x), b.x + b.w), qy = Math.min(Math.max(reserve.y, b.y), b.y + b.h);
       return (qx - reserve.x) ** 2 + (qy - reserve.y) ** 2 < reserve.r * reserve.r;
     };
-    // 상단바 · 범례 · 도구줄(전체 보기 안전 영역의 가장자리)과 휴대폰 세로 조작 막대 밑에는 놓지 않는다
+    // Never under the top bar, legend, toolbar (safe-area edges) or the portrait phone control bar
     const outside = (b: { x: number; y: number; w: number; h: number }) =>
       b.x < Math.max(4, ins.left - 8) || b.x + b.w > this.width - Math.max(4, ins.right - 8) || b.y < ins.top - 8 || b.y + b.h > this.height - Math.max(4, ins.bottom - 8)
       || (!!ins.corner && b.x + b.w > this.width - ins.corner.w - 4 && b.y + b.h > this.height - ins.corner.h - 4);
@@ -1096,15 +1096,15 @@ export class BrainScene {
       const h = n.kind === 'area' ? 22 : 18;
       const count = this.state.folded?.get(n.id);
       const text = labelText(n.title, count);
-      // 너비는 실제로 그린 뒤 잰 값(선택 표시는 굵기 · 테두리가 달라 따로 잰다). 재기 전에는 한글을 넓게 잡아 겹침을 막는다
+      // Width is measured after drawing (selected labels differ in weight and border, so measured separately). Before measuring, Hangul is estimated wide to avoid overlap
       const key = `${n.id}${isSel ? '*' : ''}${count ? `+${count}` : ''}`;
       const w = this.labelWidth.get(key) ?? labelEstimate(text, n.kind === 'area' ? 14 : 12) + (isSel ? 18 : 14);
-      // 좌우: 라우터는 항상 오른쪽(원점이 화면 중심에 투영돼 부동소수점 오차로 판정이 뒤집히던 자리), 나머지는 중심선 데드밴드 안에서 직전 방향 유지
+      // Side: the router is always on the right (the origin projects to the screen center, where float error used to flip it); others keep their previous side within the center dead band
       const geo = n.kind === 'router' ? true : labelSide(c.x, this.width / 2 - this.offset.x, this.labelSide.get(n.id));
       const prevGeo = this.labelSide.get(n.id);
       this.labelSide.set(n.id, geo);
       const prev = this.labelHold.get(n.id);
-      // 직전에 놓은 쪽을 먼저(중심선을 넘지 않았으면). 그래서 겹침 때문에 반대쪽에 놓인 이름표도 그 자리가 막히기 전까지 오가지 않는다
+      // Try the previous side first (unless it crossed the center line), so a label pushed to the other side by overlap stays until that spot is blocked
       const want = prev && prevGeo === geo ? prev.side : geo;
       const y = c.y - h / 2;
       const at = (side: boolean) => ({ x: side ? c.x + c.r + 4 : c.x - c.r - 4 - w, y, w, h });
@@ -1113,7 +1113,7 @@ export class BrainScene {
       seen.add(n.id);
       let box: { x: number; y: number; w: number; h: number } | null = null;
       if (c.rank <= 1) {
-        // 선택 · 가리킴 이름표는 항상 보이되 중앙 라우터 조립은 가리지 않는다: 양쪽 → 같은 쪽에서 조립 바깥으로 민 자리 → 조립 위 · 아래 순으로 놓을 수 있는 곳
+        // Selected and hovered labels always show but never cover the central router assembly: try both sides → same side pushed outside the assembly → above/below it
         const opts = [at(want), at(!want)];
         if (reserve && !own) {
           for (const side of [want, !want]) opts.push({ x: side ? reserve.x + reserve.r + 4 : reserve.x - reserve.r - 4 - w, y, w, h });
@@ -1123,7 +1123,7 @@ export class BrainScene {
         const side = box.x + w / 2 >= c.x;
         this.labelHold.set(n.id, { shown: true, side, movedAt: prev && prev.side === side && Number.isFinite(prev.movedAt) ? prev.movedAt : now, clashAt: 0, freeAt: 0 });
       } else {
-        // 나머지는 시간 안정화: 겹침이 잠깐이면 그 자리에서 버티고, 새로 보이거나 다시 보일 때는 빈자리가 유지 시간 동안 이어져야 한다
+        // Others use temporal stabilization: hold through brief overlaps; to appear or reappear, a free spot must last the hold time
         const block = (side: boolean): LabelBlock => { const b = at(side); return hard(b) ? 2 : placed.some(p => overlaps(b, p, LABEL_GAP)) ? 1 : 0; };
         const r = holdLabel(prev, want, block, now, pace);
         this.labelHold.set(n.id, r.next);
@@ -1149,12 +1149,12 @@ export class BrainScene {
     }
     this.labelShown = shownNow;
     for (let i = used; i < this.labels.length; i++) this.labels[i].hidden = true;
-    // 이번 프레임 후보가 아니었던 이름표(숨김 · 삭제 · 비공개 · 출처 전환 · 화면 밖 · 개수 상한)는 유지 시간 없이 바로 지운다
+    // Labels that weren't candidates this frame (hidden, deleted, private, source switch, off screen, count cap) are removed without hold time
     for (const id of this.labelHold.keys()) if (!seen.has(id)) this.labelHold.delete(id);
     for (const id of this.labelSide.keys()) if (!seen.has(id)) this.labelSide.delete(id);
   }
 
-  /** 라우터 조립의 화면 원(px). 라우터가 보이지 않거나 카메라 뒤면 null */
+  /** Router assembly's screen circle (px). null if the router isn't visible or is behind the camera */
   private routerReserve(v: THREE.Vector3): { x: number; y: number; r: number } | null {
     const i = this.routerIndex;
     if (i < 0 || this.nAlpha[i] < 0.05) return null;
@@ -1166,7 +1166,7 @@ export class BrainScene {
     return { x: (v.x + 1) / 2 * this.width, y: (1 - v.y) / 2 * this.height, r: px + 3 };
   }
 
-  /* ── 내부: 입력(레이캐스팅 선택) ── */
+  /* ── Internal: input (raycast picking) ── */
   private pick(clientX: number, clientY: number): string | null {
     const rect = this.canvas.getBoundingClientRect();
     const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
@@ -1215,7 +1215,7 @@ export class BrainScene {
     this.disposers.push(() => document.removeEventListener('visibilitychange', vis));
   }
 
-  /* ── 그리기 고리 ── */
+  /* ── Render loop ── */
   request() {
     if (this.raf || this.inFrame || document.hidden) return;
     this.last = performance.now();
@@ -1225,7 +1225,7 @@ export class BrainScene {
     this.raf = 0;
     if (document.hidden) return;
     this.inFrame = true;
-    // 프레임 간격 상한 0.1초: 느린 기기(10fps 이상)에서도 전환 · 카메라 이동이 실제 시간대로 끝나고, 멈췄다 돌아올 때만 튀지 않게 자른다
+    // Frame delta capped at 0.1 s: transitions and camera moves finish in real time on slow devices (10fps+), clamped only to avoid jumps after a stall
     const raw = Math.max(0, (now - this.last) / 1000);
     const dt = Math.min(0.1, raw);
     this.last = now;
@@ -1250,7 +1250,7 @@ export class BrainScene {
       this.applyOffset();
       busy = true;
     } else if (dx || dy) { this.offset = { ...this.offsetT }; this.applyOffset(); }
-    // 자동 회전: 허용되고 쉬는 시간이 지났으면 목표 속도로 천천히 올리고, 아니면 빨리 내린다(정지 · 동작 줄이기는 즉시 0)
+    // Auto-rotation: if allowed and the pause is over, ramp up slowly to target speed; otherwise ramp down quickly (paused/reduced motion: 0 at once)
     const allowed = this.autoRotate && !this.still && this.opening >= 1 && !this.rot.dragging;
     const goal = allowed && now >= this.rot.holdUntil ? 1 : 0;
     if (this.still) this.rot.factor = 0;
@@ -1261,7 +1261,7 @@ export class BrainScene {
     }
     this.controls.autoRotate = this.rot.factor > 0;
     this.controls.autoRotateSpeed = ORBIT_SPEED * this.rot.factor;
-    // 회전 각도는 실제 경과 시간대로(느린 프레임에서도 한 바퀴 시간이 같게). 숨김에서 돌아온 첫 프레임은 request()가 시각을 새로 잡는다
+    // Rotation angle follows real elapsed time (same turn time even on slow frames). On the first frame back from hidden, request() resets the clock
     const moved = this.controls.update(Math.min(0.25, raw));
     busy = busy || moved || this.controls.autoRotate;
     busy = this.stepSignals() || busy;
@@ -1283,7 +1283,7 @@ export class BrainScene {
   };
 }
 
-/** WebGL2를 쓸 수 있는지(대체 화면 판단) */
+/** Whether WebGL2 is available (decides the fallback screen) */
 export function webglAvailable(): boolean {
   try {
     const c = document.createElement('canvas');

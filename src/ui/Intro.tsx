@@ -1,9 +1,9 @@
-// 첫 화면 안내: 오프닝이 끝나면 오프닝 칩 자리에서 규모(가상 문서 · 연결 수)와 첫 행동 단서를 크게 보여 준다.
-// 첫 조작(누르기 · 키 입력) 또는 잠시 뒤 사라진다. 수치는 합성 데모 값임을 함께 표시해 운영 수치로 보이지 않게 한다.
+// First-screen intro: after the opening, shows the scale (demo docs · link count) and a first-action hint in large type where the opening chip was.
+// Disappears on the first interaction (click · key press) or after a while. The numbers are marked as synthetic demo values so they don't read as real figures.
 import { useEffect, useState } from 'react';
 import { CloseIcon } from './icons';
 
-/** 0에서 목표까지 빠르게 세어 올린다. 정지 · 동작 줄이기에서는 바로 목표 값 */
+/** Count up quickly from 0 to the target. Paused or reduced motion jumps straight to the target */
 function useCountUp(target: number, still: boolean) {
   const [value, setValue] = useState(still ? target : 0);
   useEffect(() => {
@@ -26,12 +26,12 @@ interface Props {
   edges: number;
   areas: number;
   topics: number;
-  /** 데이터 표시 꼬리표(합성 데모 · 합성 성능 데이터 · 실제 볼트) */
+  /** Data tag (synthetic demo · synthetic performance data · real vault) */
   tag: string;
-  /** 문서 수 이름(가상 문서 · 문서) */
+  /** Name for the doc count (demo docs · items) */
   docLabel: string;
   still: boolean;
-  /** 2D 대체 화면에서는 회전 안내를 뺀다 */
+  /** The 2D fallback omits the rotate hint */
   flat: boolean;
   onClose(): void;
 }
@@ -39,17 +39,17 @@ interface Props {
 export function Intro({ docs, edges, areas, topics, tag, docLabel, still, flat, onClose }: Props) {
   const d = useCountUp(docs, still), e = useCountUp(edges, still);
   return (
-    <div className="intro" role="note" aria-label="세컨드 브레인 안내">
-      <p className="intro__stats" aria-label={`${tag}: ${docLabel} ${docs}개, 연결 ${edges}개, 영역 ${areas}개, 주제 ${topics}개`}>
+    <div className="intro" role="note" aria-label="Second Brain intro">
+      <p className="intro__stats" aria-label={`${tag}: ${docs} ${docLabel}, ${edges} links, ${areas} areas, ${topics} topics`}>
         <span className="intro__stat" aria-hidden="true"><b>{d}</b>{docLabel}</span>
-        <span className="intro__stat" aria-hidden="true"><b>{e}</b>연결</span>
-        <span className="intro__stat intro__stat--minor" aria-hidden="true"><b>{areas}</b>영역 · <b>{topics}</b>주제</span>
+        <span className="intro__stat" aria-hidden="true"><b>{e}</b>links</span>
+        <span className="intro__stat intro__stat--minor" aria-hidden="true"><b>{areas}</b>areas · <b>{topics}</b>topics</span>
         <span className="demo-tag" aria-hidden="true">{tag}</span>
       </p>
       <p className="intro__hint">
-        빛나는 점을 누르면 본문과 연결 자료가 열립니다{!flat && <> · 끌어서 회전</>}<span className="intro__keys"> · <kbd>/</kbd> 검색</span>
+        Click a glowing dot to open its body and linked materials{!flat && <> · drag to rotate</>}<span className="intro__keys"> · <kbd>/</kbd> search</span>
       </p>
-      <button type="button" className="intro__close" aria-label="안내 닫기" title="안내 닫기" onClick={onClose}><CloseIcon /></button>
+      <button type="button" className="intro__close" aria-label="Close intro" title="Close intro" onClick={onClose}><CloseIcon /></button>
     </div>
   );
 }

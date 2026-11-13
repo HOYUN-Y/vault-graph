@@ -1,18 +1,18 @@
-// 화면 표현: 종류 이름 · 연결 이름 · 영역별 색. 색은 영역 순서로 정하고(데모 ID에 묶지 않는다), 하위 색인마다 같은 계열 안에서 조금씩 바꾼다.
+// Presentation: kind names · edge names · per-area colors. Colors follow area order (not tied to demo IDs) and vary slightly within the same family for each sub-index.
 import type { BrainGraph } from '../core/graph';
 import type { EdgeKind, EdgeView, NodeKind } from '../core/types';
 
 export const KIND_LABEL: Record<NodeKind, string> = {
-  router: '라우터', area: '영역 색인', subindex: '하위 색인', guide: '프로젝트 안내', moc: '주제 MOC', material: '자료'
+  router: 'Router', area: 'Area index', subindex: 'Sub-index', guide: 'Project guide', moc: 'Topic MOC', material: 'Material'
 };
-export const EDGE_LABEL: Record<EdgeKind, string> = { primary: '분류 소속', index: '색인 연결', topic: '주제 연결' };
-export const VIEW_LABEL: Record<EdgeView, string> = { all: '전체', structure: '영역 구조', topic: '주제 연결' };
+export const EDGE_LABEL: Record<EdgeKind, string> = { primary: 'Hierarchy', index: 'Index link', topic: 'Topic link' };
+export const VIEW_LABEL: Record<EdgeView, string> = { all: 'All', structure: 'Area structure', topic: 'Topic links' };
 
 export const ROUTER_COLOR = '#F6F1E7';
 export const TOPIC_COLOR = '#FFB52E';
 const FALLBACK = '#94A3B8';
-// 영역 계열(테마 팔레트 안에서 명도 · 온도로 구분): [영역 색, 하위 색인 1, 2, 3 …]
-// 첫 영역은 차가운 슬레이트, 둘째 영역은 따뜻한 아이보리, 그다음은 더 어두운 슬레이트 · 아이보리. 주제(MOC)는 금색 하나.
+// Area families (told apart by lightness · temperature within the theme palette): [area color, sub-index 1, 2, 3 …]
+// First area is cool slate, second is warm ivory, then darker slate · ivory. Topics (MOCs) are a single gold.
 const FAMILIES = [
   ['#CBD5E1', '#CBD5E1', '#94A3B8', '#E2E8F0', '#B4C0D0'],
   ['#F6F1E7', '#F6F1E7', '#E4D9C3', '#FBF8F2', '#D9CCB2'],

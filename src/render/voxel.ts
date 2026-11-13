@@ -1,34 +1,34 @@
-// 복셀 표현(순수 계산 — Three.js · 브라우저에 의존하지 않아 Node 테스트에서 그대로 쓴다).
-// - 문서 하나 = 노드 하나. 노드는 종류별로 정해진 큐브 조각(piece) 묶음으로 그린다. 조각 수는 문서 수와 다르며 개수 · 검색 · 선택은 노드 기준이다.
-// - 노드 자리는 3D 배치(layout3d) 결과를 정육면체 격자(CELL)에 맞춰 놓는다. 같은 칸을 두 노드가 쓰지 않게 가까운 빈칸으로 옮겨
-//   이웃 노드가 계단처럼 붙어 보이는 군집이 된다. 이동량은 칸 몇 개 이내라 영역 · 가지 구조는 그대로다.
+// Voxel representation (pure — no Three.js or browser dependency, used as-is in Node tests).
+// - One document = one node. Each node is drawn as a per-kind set of cube pieces. Piece count differs from document count; counts, search and selection are per node.
+// - Node positions snap the 3D layout (layout3d) to a cube grid (CELL). Two nodes never share a cell; a node moves to the nearest free cell,
+//   so neighbors form stair-like clusters. Moves stay within a few cells, so area and branch structure is preserved.
 import type { Vec3 } from '../core/layout3d';
 import type { DocFormat, NodeKind } from '../core/types';
 
 /**
- * 격자 한 칸(세계 단위). 배치 반지름은 약 1이다. 같은 색인 아래 이웃 자료는 대개 바로 옆 칸에 놓이므로 칸 크기가 곧 군집 안 문서 간격이다.
- * 0.024 → 0.027(+12.5%): 군집 중심(안내 문서 자리)은 그대로 두고 군집 안 자료 사이만 넓힌다.
+ * One grid cell (world units). Layout radius is about 1. Neighbor materials under one index usually land in adjacent cells, so cell size is the spacing inside a cluster.
+ * 0.024 → 0.027 (+12.5%): cluster centers (guide document spots) stay put; only spacing between materials inside a cluster widens.
  */
 export const CELL = 0.027;
 
 export interface Piece {
-  /** 노드 중심에서 조각 중심까지(세계 단위) */
+  /** From node center to piece center (world units) */
   offset: Vec3;
-  /** 정육면체 한 변 */
+  /** Cube edge length */
   size: number;
-  /** 조각마다 아주 조금 다른 밝기(0~1) — 같은 노드 안에서 면이 한 덩어리로 뭉개지지 않게 */
+  /** Slightly different brightness per piece (0–1) — so faces in one node don't blur into one block */
   tone: number;
 }
 
 export interface Assembly {
   pieces: Piece[];
-  /** 조각 묶음의 반 너비(가장 바깥 면까지) — 선택 테두리 · 이름표 · 누르기 반경 */
+  /** Half width of the piece set (to the outermost face) — selection outline, label and hit radius */
   half: number;
-  /** 본문 없는 파일: 면을 비우고 모서리만 밝힌다 */
+  /** File without a body: empty faces, lit edges only */
   hollow: boolean;
 }
 
-/** 정수 칸 좌표 목록을 가운데 맞춰 조각으로 만든다(gap: 조각 사이 틈 비율) */
+/** Turn integer cell coordinates into centered pieces (gap: spacing ratio between pieces) */
 function build(cells: Vec3[], unit: number, fill = 0.9): Piece[] {
   const c = [0, 1, 2].map(k => (Math.min(...cells.map(p => p[k])) + Math.max(...cells.map(p => p[k]))) / 2);
   return cells.map(p => ({
@@ -41,25 +41,25 @@ function build(cells: Vec3[], unit: number, fill = 0.9): Piece[] {
 const range = (n: number) => Array.from({ length: n }, (_, i) => i);
 const cube = (n: number) => range(n).flatMap(x => range(n).flatMap(y => range(n).map(z => [x, y, z] as Vec3)));
 
-/** 종류별 조립 형태. 범례 그림(ui/Glyph의 등각 그림)도 같은 칸 좌표(SHAPE_CELLS)를 쓴다 */
+/** Assembly shape per kind. The legend icons (isometric drawings in ui/Glyph) use the same cell coordinates (SHAPE_CELLS) */
 export const SHAPE_CELLS: Record<'router' | 'area' | 'subindex' | 'guide' | 'moc' | 'material', Vec3[]> = {
-  // 라우터 핵: 3×3×3에서 꼭짓점 8개를 뺀 둥근 덩어리(19조각)
+  // Router core: a rounded 3×3×3 block minus its 8 corners (19 pieces)
   router: cube(3).filter(p => p.filter(v => v !== 1).length < 3),
-  // 영역 색인: 2×2×2 큰 블록
+  // Area index: a large 2×2×2 block
   area: cube(2),
-  // 하위 색인: 2×2 납작한 판
+  // Sub-index: a flat 2×2 plate
   subindex: [[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1]],
-  // 프로젝트 안내: 세 칸 계단
+  // Project guide: a three-step staircase
   guide: [[0, 0, 0], [1, 0, 0], [2, 0, 0], [1, 1, 0], [2, 1, 0], [2, 2, 0]],
-  // 주제 MOC: 여섯 갈래 입체 십자
+  // Topic MOC: a six-armed 3D cross
   moc: [[1, 1, 1], [0, 1, 1], [2, 1, 1], [1, 0, 1], [1, 2, 1], [1, 1, 0], [1, 1, 2]],
-  // 자료: 정육면체 하나
+  // Material: a single cube
   material: [[0, 0, 0]]
 };
-// 자료 큐브 0.02 → 0.0165(−17.5%): 칸이 넓어진 만큼 큐브 사이 틈이 0.006 → 약 0.012로 벌어진다. 안내 문서 조립은 그대로라 위계가 더 또렷하다
+// Material cube 0.02 → 0.0165 (−17.5%): with wider cells the gap between cubes grows 0.006 → ~0.012. Guide document assemblies are unchanged, so hierarchy reads more clearly
 const UNIT: Record<NodeKind, number> = { router: 0.026, area: 0.023, subindex: 0.016, guide: 0.012, moc: 0.017, material: 0.0165 };
 const FILL: Record<NodeKind, number> = { router: 0.9, area: 0.9, subindex: 0.88, guide: 0.9, moc: 0.9, material: 0.9 };
-/** 라우터 둘레 고리: 수평 원 위의 작은 큐브 12개(라우터 그림의 바깥 고리) */
+/** Ring around the router: 12 small cubes on a horizontal circle (the outer ring of the router icon) */
 const RING = 12, RING_R = 0.082, RING_SIZE = 0.011;
 
 export function assembly(kind: NodeKind, format: DocFormat = 'md'): Assembly {
@@ -75,8 +75,8 @@ export function assembly(kind: NodeKind, format: DocFormat = 'md'): Assembly {
 }
 
 /**
- * 격자에 맞춘 노드 자리. 안내 문서(큰 조립)를 먼저 놓아 그 둘레 칸을 비워 두고, 자료는 가장 가까운 빈칸을 쓴다.
- * 입력 순서 · 좌표가 같으면 결과도 같다(결정적).
+ * Grid-snapped node positions. Guide documents (large assemblies) go first and reserve surrounding cells; materials take the nearest free cell.
+ * Same input order and coordinates give the same result (deterministic).
  */
 export function snapToGrid(nodes: { kind: NodeKind; pos: Vec3 }[], cell = CELL): Vec3[] {
   const used = new Set<string>();

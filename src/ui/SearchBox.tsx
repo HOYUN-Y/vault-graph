@@ -1,4 +1,4 @@
-// 검색 콤보박스: 입력하면 결과 목록이 열리고, 위 · 아래 화살표로 고른 뒤 Enter로 그 문서로 이동한다. Esc는 목록 닫기 → 검색어 지우기 → 입력 벗어나기 순.
+// Search combobox: typing opens the result list; pick with up · down arrows and press Enter to go to that doc. Esc closes the list → clears the query → leaves the input.
 import { forwardRef, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { BrainGraph } from '../core/graph';
@@ -11,7 +11,7 @@ import type { Palette } from './theme';
 
 export interface SearchBoxHandle { focus(): void }
 const SHOWN = 30;
-const FIELD_LABEL = { title: '제목', path: '위치', summary: '색인 설명', body: '본문' } as const;
+const FIELD_LABEL = { title: 'Title', path: 'Location', summary: 'Index description', body: 'Body' } as const;
 
 function Highlight({ text, terms }: { text: string; terms: string[] }) {
   if (!terms.length) return <>{text}</>;
@@ -40,10 +40,10 @@ interface Props {
   graph: BrainGraph;
   palette: Palette;
   onPick(id: string): void;
-  /** Esc로 입력을 벗어날 때 포커스를 돌려 줄 곳 */
+  /** Where focus returns when Esc leaves the input */
   onLeave(): void;
-  /** 실제 조작(누르기 · 키 입력 · 입력 변경): 자동 시연 · 자동 카메라 움직임을 멈춘다.
-   *  포커스만으로는 부르지 않는다 — 선택 해제 뒤 포커스가 돌아올 때 전체 보기 이동을 끊지 않게 */
+  /** Real interaction (click · key press · input change): stops the auto tour · automatic camera moves.
+   *  Not called on focus alone, so focus returning after deselect doesn't cut off the fit-all move */
   onActivity(): void;
 }
 
@@ -57,10 +57,10 @@ export const SearchBox = forwardRef<SearchBoxHandle, Props>(function SearchBox({
   const listId = `${uid}-results`;
   const queryRef = useRef(query);
   queryRef.current = query;
-  // '/' 단축키로 들어오면 남은 검색어의 결과를 다시 연다(패널을 닫아 포커스가 돌아올 때는 열지 않음)
+  // Entering via the '/' shortcut reopens results for the remaining query (not when focus returns from closing the panel)
   useImperativeHandle(ref, () => ({ focus: () => { input.current?.focus(); input.current?.select(); if (queryRef.current.trim()) setOpen(true); } }), []);
 
-  // 갱신으로 빠진 자료(삭제 · 비공개 전환)에 걸리는 검색어는 지운다: 입력 · 결과 · 상태 문구 · 접근성 DOM에 이전 이름이 남지 않게
+  // Clear a query that matches material removed by an update (deleted · made private), so the old name doesn't linger in input · results · status text · accessibility DOM
   const prevGraph = useRef(graph);
   useEffect(() => {
     const prev = prevGraph.current;
@@ -74,7 +74,7 @@ export const SearchBox = forwardRef<SearchBoxHandle, Props>(function SearchBox({
   const terms = useMemo(() => searchTerms(query), [query]);
   const hits = result.hits.slice(0, SHOWN);
   const shown = open && !!query.trim();
-  // 같은 제목이 결과에 둘 이상이면 경로를 강조해 구분한다
+  // When two or more results share a title, emphasize the path to tell them apart
   const sameTitle = useMemo(() => {
     const count = new Map<string, number>();
     for (const h of hits) count.set(h.doc.title, (count.get(h.doc.title) ?? 0) + 1);
@@ -92,12 +92,12 @@ export const SearchBox = forwardRef<SearchBoxHandle, Props>(function SearchBox({
     <div className={shown ? 'search is-open' : 'search'}>
       <label className="search__field">
         <SearchIcon />
-        <span className="sr-only">세컨드 브레인 검색</span>
+        <span className="sr-only">Search Second Brain</span>
         <input
           ref={input}
           type="search"
           value={query}
-          placeholder="제목 · 위치 · 색인 설명 · 본문 검색"
+          placeholder="Search title · location · description · body"
           autoComplete="off"
           spellCheck={false}
           maxLength={120}
@@ -106,7 +106,7 @@ export const SearchBox = forwardRef<SearchBoxHandle, Props>(function SearchBox({
           aria-controls={listId}
           aria-autocomplete="list"
           aria-activedescendant={shown && hits.length ? `${uid}-opt-${active}` : undefined}
-          // 포커스만으로는 목록을 열지 않는다: 패널을 닫아 포커스가 돌아올 때 이전 결과가 다시 화면을 덮지 않게. 누르기 · 입력 · ↓로 연다
+          // Focus alone doesn't open the list, so old results don't cover the screen when focus returns from closing the panel. Click · typing · ↓ open it
           onPointerDown={() => { onActivity(); if (query.trim()) setOpen(true); }}
           onBlur={() => setOpen(false)}
           onChange={event => { onActivity(); setQuery(event.target.value); setActive(0); setOpen(true); }}
@@ -114,7 +114,7 @@ export const SearchBox = forwardRef<SearchBoxHandle, Props>(function SearchBox({
             if (event.key !== 'Tab' && event.key !== 'Shift') onActivity();
             if (event.key === 'ArrowDown' && hits.length) { event.preventDefault(); setOpen(true); setActive((active + 1) % hits.length); }
             else if (event.key === 'ArrowUp' && hits.length) { event.preventDefault(); setOpen(true); setActive((active - 1 + hits.length) % hits.length); }
-            // 목록이 닫혀 있으면 Enter는 남은 검색어의 결과를 다시 연다(바로 이동하지 않음)
+            // With the list closed, Enter reopens results for the remaining query (doesn't navigate right away)
             else if (event.key === 'Enter') { event.preventDefault(); if (shown && hits[active]) pick(hits[active]); else if (!shown && query.trim()) setOpen(true); }
             else if (event.key === 'Escape') {
               event.preventDefault();
@@ -129,7 +129,7 @@ export const SearchBox = forwardRef<SearchBoxHandle, Props>(function SearchBox({
       </label>
       {shown && (
         <div className="search__panel">
-          <ul ref={list} id={listId} className="search__list" role="listbox" aria-label="검색 결과">
+          <ul ref={list} id={listId} className="search__list" role="listbox" aria-label="Search results">
             {hits.map((hit, i) => {
               const { doc } = hit;
               const area = graph.areaOf.get(doc.id);
@@ -146,9 +146,9 @@ export const SearchBox = forwardRef<SearchBoxHandle, Props>(function SearchBox({
             })}
           </ul>
           <p className="search__status" role="status" aria-live="polite">
-            {result.total === 0 ? '일치하는 자료가 없습니다. 다른 낱말로 찾아 보세요.'
-              : result.total > SHOWN ? `${result.total}개 중 ${SHOWN}개를 보여 줍니다. 검색어를 더 구체적으로 입력해 주세요.`
-              : `${result.total}개 찾음 · ↑↓로 고르고 Enter로 이동`}
+            {result.total === 0 ? 'No matches. Try different words.'
+              : result.total > SHOWN ? `Showing ${SHOWN} of ${result.total}. Try a more specific query.`
+              : `${result.total} found · ↑↓ to choose, Enter to open`}
           </p>
         </div>
       )}

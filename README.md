@@ -1,10 +1,10 @@
 # Vault Graph
 
-Markdown 색인과 문서 관계를 3D 복셀 그래프로 보여 주는 로컬 웹앱입니다. 5,000개 가상 문서 데모와 검색·문서 선택·이름표 켬/끔을 지원합니다.
+A local web app that shows Markdown indexes and the links between documents as a 3D voxel graph. It ships with a 5,000-document demo and supports search, document selection and toggling labels.
 
-## 설치 및 실행
+## Install and run
 
-Node.js 22.12 이상이 필요합니다.
+Requires Node.js 22.12 or later.
 
 ```bash
 git clone https://github.com/HOYUN-Y/vault-graph.git
@@ -14,8 +14,23 @@ npm run build
 npm run preview
 ```
 
-브라우저에서 http://127.0.0.1:5181 을 엽니다. 개발 모드는 `npm run dev`입니다.
+Open http://127.0.0.1:5181 in your browser. For development mode, run `npm run dev`.
 
-설정 없이 데모를 사용할 수 있습니다. 실제 볼트는 `settings.example.json`을 `settings.json`으로 복사하고 `vaultPath`에 절대경로를 넣어 연결합니다. `CLAUDE.md` 라우터와 Markdown 색인 구조를 지원하며, 원문은 읽기 전용입니다.
+## Connecting a real vault
 
-이름표는 화면의 **이름표** 단추 또는 **L** 키로 켜고 끕니다. 글꼴 라이선스는 `public/fonts/licenses/`에 있습니다.
+The demo works with no settings. To connect a real vault, copy `settings.example.json` to `settings.json` and set `vaultPath` to the vault's absolute path. Source files are read-only.
+
+`structure` selects how the vault is read:
+
+- `"indexed"` (default): the router is `CLAUDE.md`, and every index starts expanded.
+- `"workspace"`: set `routerPath` to the router's path relative to the vault. Only area indexes start expanded; other indexes appear as clusters labelled with their child count, and you click a cluster to expand it.
+
+### Private rules
+
+- Backticked names on a router line marked "Private" (or the Korean `비공개`) are hidden, along with everything under them.
+- A router line `Private ledger: .secondbrain/private-paths.txt` adds the vault-relative paths listed in that file, one per line (`#` starts a comment). The line must appear exactly once and point to that exact path.
+- If the rules cannot be read or parsed, no real data is shown and the app shows the demo instead.
+
+## Labels and fonts
+
+Turn labels on and off with the **Labels** button or the **L** key. Font licenses are in `public/fonts/licenses/`.

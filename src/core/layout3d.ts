@@ -1,9 +1,9 @@
-// 3D 자유형 신경망 배치(순수 계산 — 브라우저 · Three.js에 의존하지 않아 Node 테스트 · Web Worker에서 쓸 수 있다).
-// 구 표면 방향 배치와 Barnes–Hut 반발 · 종류별 용수철을 쓰는 결정적 레이아웃이다.
-// 설계 참고: n1ghtmare-dev/obsidian-cosmograph(MIT). 계산부는 브라우저 전역에 의존하지 않는다.
+// Free-form 3D network layout (pure — no browser or Three.js dependency, so it runs in Node tests and a Web Worker).
+// A deterministic layout using sphere-surface directions, Barnes–Hut repulsion and per-kind springs.
+// Design reference: n1ghtmare-dev/obsidian-cosmograph (MIT). The computation doesn't depend on browser globals.
 //
-// 자리는 그래프(분류 소속 · 관계)만으로 한 번 정한다. 펼침 · 필터 · 연결 보기 · 선택은 자리를 바꾸지 않는다.
-// 공유 자료는 주 소속(분류 소속) 가지 안에 자리 하나만 갖고, 다른 색인 · MOC 연결은 아주 약한 용수철로만 당긴다.
+// Positions are set once from the graph alone (primary · relations). Expand, filters, link view and selection never move them.
+// A shared material gets one spot inside its primary branch; other index and MOC links pull only with very weak springs.
 import type { BrainGraph } from './graph';
 import { pairKey } from './graph';
 
@@ -43,10 +43,10 @@ export function fibonacciSphere(count: number): Vec3[] {
   return out;
 }
 
-// 영역 기준 방향: 첫 영역은 왼쪽 반구, 둘째는 오른쪽 반구(뇌의 좌우), 그다음은 남은 곳에서 가장 먼 방향
+// Area base directions: first area in the left hemisphere, second in the right (brain halves), then the farthest remaining direction
 const AREA_DIRS: Vec3[] = [[-0.9, 0.14, 0.4], [0.9, 0.06, -0.42], [0.08, -0.86, 0.5], [-0.1, 0.74, -0.66]];
 
-/** 영역 · MOC 기준 방향과 문서별 출발 방향(구 표면). 큰 하위 트리일수록 넓은 자리를 갖는다 */
+/** Area and MOC base directions plus each document's start direction (sphere surface). Bigger subtrees get more room */
 export function directions(g: BrainGraph): { dirs: Map<string, Vec3>; anchors: Map<string, Vec3> } {
   const anchors = new Map<string, Vec3>();
   const used: Vec3[] = [];
@@ -56,7 +56,7 @@ export function directions(g: BrainGraph): { dirs: Map<string, Vec3>; anchors: M
       : spare.reduce((best, c) => { const near = Math.max(...used.map(u => dot(u, c))); return near < best.near ? { c, near } : best; }, { c: spare[0], near: Infinity }).c;
     anchors.set(area.id, dir); used.push(dir);
   });
-  // 주제 MOC: 두 반구 사이의 가운데 면(x ≈ 0)에 고리 모양으로 — 양쪽 영역의 자료를 잇는 다리 자리
+  // Topic MOCs: a ring on the middle plane between hemispheres (x ≈ 0) — a bridge between both areas' materials
   g.mocs.forEach((moc, i) => {
     const a = Math.PI / 2 + (i * TAU) / Math.max(g.mocs.length, 1) + 0.35;
     anchors.set(moc.id, norm([(i % 2 ? 1 : -1) * 0.12, Math.cos(a), Math.sin(a)]));
@@ -100,12 +100,12 @@ export function directions(g: BrainGraph): { dirs: Map<string, Vec3>; anchors: M
 interface Point { dir: Vec3; depth: number; group: string; hub: boolean; weight: number; areaRoot?: boolean }
 interface Link { a: number; b: number; kind: 'primary' | 'link' }
 
-// 길이는 모두 간격 s(단위 공을 N개로 나눈 간격) 배수. 원본 NEURAL 값(실제 사본 1,313개에서 고른 값)에서
-// 송이(색인 → 자료) 길이와 반발만 키웠다: 홍보 화면에서 개별 자료가 점으로 읽히고 가지 사이가 덜 비게
+// All lengths are multiples of spacing s (unit ball split into N). From the original NEURAL values (tuned on a real 1,313-file copy)
+// only the cluster (index → material) length and repulsion grew: so single materials read as dots on promo screens and branches look less empty
 const NEURAL = { leaf: 3.2, branch: [2.2, 0.5, 0.5], trunk: 6, link: 4, k: { leaf: 0.22, branch: 0.3, trunk: 0.15, link: 0.01 },
   charge: 0.24, near: 0.6, theta: 0.9, gravity: 0.004, squeeze: 0.45, hold: 0.004, shell: [2, 3.2], iterations: 300, keep: 0.97, soft: 0.25 };
 
-/** 신경망 배치: 가지 · 송이로 펼친다. links의 -1은 원점에 고정된 가운데 핵(라우터) */
+/** Network layout: spread into branches and clusters. -1 in links is the central core fixed at the origin (router) */
 export function neuralLayout(points: Point[], links: Link[], anchors: Map<string, Vec3>, iterations = NEURAL.iterations): Vec3[] {
   const N = points.length;
   if (!N) return [];
@@ -212,7 +212,7 @@ export function neuralLayout(points: Point[], links: Link[], anchors: Map<string
       if (m > lim) { const k = lim / m; vx *= k; vy *= k; vz *= k; }
       V[i] = vx; V[i + 1] = vy; V[i + 2] = vz;
       P[i] += vx; P[i + 1] += vy; P[i + 2] += vz;
-      // 영역 핵은 매 반복 기준 광선 위에서만 이동해 하위 군집도 같은 경계를 보며 수렴한다.
+      // Area cores move only along their base ray each iteration, so subclusters converge against the same boundary.
       if (points[i / 3].areaRoot) {
         const radius = Math.max(NEURAL.trunk * s * 0.5, Math.sqrt(radiusSquared / N) * 0.5, Math.hypot(P[i], P[i + 1], P[i + 2]));
         const speed = V[i] * D[i] + V[i + 1] * D[i + 1] + V[i + 2] * D[i + 2];
@@ -228,13 +228,13 @@ export function neuralLayout(points: Point[], links: Link[], anchors: Map<string
   });
 }
 
-/** 그래프 전체의 고정 자리. 라우터는 원점 */
+/** Fixed positions for the whole graph. The router is at the origin */
 export function layoutGraph(g: BrainGraph, iterations?: number): Map<string, Vec3> {
   const { dirs, anchors } = directions(g);
   const planet = g.docs.filter(d => d.id !== g.routerId);
   const at = new Map(planet.map((d, i) => [d.id, i]));
   const end = (id: string) => (id === g.routerId ? -1 : at.get(id));
-  // 하위 자료 수(가지 길이)
+  // Descendant count (branch length)
   const weight = new Map<string, number>();
   const count = (id: string): number => {
     const known = weight.get(id);
@@ -272,7 +272,7 @@ export function layoutGraph(g: BrainGraph, iterations?: number): Map<string, Vec
   return out;
 }
 
-/** 오프닝용 뇌 형상 좌표(장식 · 출발점 전용). 실제 그래프 자리와 분리되어 연결 관계를 왜곡하지 않는다 */
+/** Brain-shaped coordinates for the opening (decoration and start points only). Kept apart from real graph positions so links aren't distorted */
 export function brainShape(count: number, seed = 'brain'): Vec3[] {
   const out: Vec3[] = [];
   const half = Math.ceil(count / 2);
@@ -281,11 +281,11 @@ export function brainShape(count: number, seed = 'brain'): Vec3[] {
     const side = i % 2 === 0 ? -1 : 1;
     const u = shell[Math.floor(i / 2) % half];
     const h = hash(`${seed}:${i}`);
-    // 반구 하나: 좌우로 납작하고 앞뒤로 긴 타원체, 안쪽(가운데) 면은 평평하게
+    // One hemisphere: an ellipsoid flat side to side and long front to back, with a flat inner (middle) face
     let x = u[0] * 0.36, y = u[1] * 0.56, z = u[2] * 0.82;
     if (x * side < 0) x *= 0.25;
     if (y < -0.25) y = -0.25 + (y + 0.25) * 0.55;
-    // 주름(이랑): 표면을 조금 들고 내린다
+    // Folds (gyri): raise and lower the surface slightly
     const gyri = 1 + 0.07 * Math.sin(u[1] * 11 + u[2] * 7 + side) * Math.sin(u[2] * 13 - u[0] * 5);
     const depth = 0.82 + 0.18 * Math.sqrt(h);
     out.push([(x * gyri * depth + side * 0.34) * 1.15, y * gyri * depth * 1.15 + 0.05, z * gyri * depth * 1.15]);

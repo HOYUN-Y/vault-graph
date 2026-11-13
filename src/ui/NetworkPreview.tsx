@@ -1,5 +1,5 @@
-// 2D 대체 연결망(정적 SVG): WebGL을 쓸 수 없을 때(?webgl=0 · 시작 실패 · 컨텍스트 중단) 3D 대신 보여 준다.
-// 자리(layout2d)는 데이터만으로 정해져 필터 · 연결 보기 · 선택에 따라 움직이지 않는다. 패널이 열리면 남은 화면 가운데로 전체가 비킨다.
+// 2D fallback network (static SVG): shown instead of 3D when WebGL is unavailable (?webgl=0 · failed start · context lost).
+// Positions (layout2d) depend on the data only and don't move with filter · link view · selection. When the panel opens, the whole graph shifts to the center of the remaining space.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { BrainGraph } from '../core/graph';
@@ -10,7 +10,7 @@ import { VoxelMark } from './Glyph';
 import { KIND_LABEL, TOPIC_COLOR, colorOf } from './theme';
 import type { Palette } from './theme';
 
-/** corner: 오른쪽 아래 구석을 가리는 도구줄(휴대폰 세로 조작 막대)의 크기(px, 화면 오른쪽 · 아래 가장자리부터) */
+/** corner: size of the toolbar covering the bottom-right corner (portrait phone control dock), in px from the right and bottom edges */
 export interface Insets { top: number; right: number; bottom: number; left: number; corner?: { w: number; h: number } }
 
 interface Props {
@@ -21,7 +21,7 @@ interface Props {
   emphasis: Set<string> | null;
   selected: string | null;
   insets: Insets;
-  /** 노드 이름표 표시(글자 켬/끔). 끄면 선택 · 가리킴 이름표도 숨기고, 노드의 title(접근성 이름)은 그대로 둔다 */
+  /** Show node labels (text on/off). Off also hides selected and hovered labels; the node title (accessible name) stays */
   showLabels: boolean;
   onSelect(id: string): void;
 }
@@ -30,14 +30,14 @@ const SIZE: Record<NodeKind, number> = { router: 13, area: 11, subindex: 7.5, gu
 const FONT: Record<NodeKind, number> = { router: 13, area: 15, subindex: 12, guide: 11.5, moc: 12.5, material: 11.5 };
 const ORDER: Record<NodeKind, number> = { material: 0, guide: 1, subindex: 2, moc: 3, area: 4, router: 5 };
 const BG = '#162033';
-// 이름표 우선순위(작을수록 먼저 자리를 잡는다)와 겹침 여백. 겹치는 낮은 순위 이름표는 숨기고 점은 그대로 둔다
+// Label priority (lower places first) and overlap margin. Overlapping lower-priority labels are hidden; their dots stay
 const LABEL_RANK: Record<NodeKind, number> = { router: 2, area: 3, moc: 4, subindex: 5, guide: 6, material: 8 };
 const LABEL_GAP = 3;
 
 type Pt = { x: number; y: number };
 type Anchor = 'start' | 'middle' | 'end';
 
-/** 이름표 자리: 가운데에서 바깥쪽으로. MOC는 가운데 가까이 모여 있어 항상 바깥 옆으로 둔다(위 · 아래 가운데 정렬이면 서로 겹친다) */
+/** Label placement: outward from the center. MOCs cluster near the center, so they always go to the outer side (centering above · below makes them overlap) */
 function labelSpot(kind: NodeKind, p: Pt, size: number): { anchor: Anchor; lx: number; ly: number } {
   const len = Math.hypot(p.x, p.y);
   const dir = len > 0.001 ? { x: p.x / len, y: p.y / len } : { x: 0, y: 1 };
@@ -50,15 +50,15 @@ function labelSpot(kind: NodeKind, p: Pt, size: number): { anchor: Anchor; lx: n
 const textWidth = (text: string, size: number) => [...text].reduce((w, ch) => w + (ch.charCodeAt(0) >= 0x1100 ? size : size * 0.6), 0);
 
 /**
- * 둥근 배치의 반지름 · 중심 높이. 휴대폰 세로 조작 막대(corner)가 있으면 배치가 막대 사각형에 닿지 않게 하고,
- * 위아래에 남는 높이가 있으면 중심을 조금 올려(막대에서 멀어지게) 배치가 덜 작아지는 높이를 고른다.
+ * Radius · center height of the circular layout. With a portrait phone control dock (corner), keep the layout clear of its rectangle,
+ * and if there is spare height, raise the center a little (away from the dock) to pick the height that shrinks the layout least.
  */
 function fitRing(freeW: number, freeH: number, portrait: boolean, cx: number, insets: Insets, box: { w: number; h: number }) {
   const base = Math.min(freeW / 2 - (portrait ? 30 : 110), freeH / 2 - (portrait ? 46 : 36));
   const cy0 = insets.top + freeH / 2;
   const corner = insets.corner;
   if (!corner || corner.w <= 0 || corner.h <= 0) return { R: Math.max(70, base), cy: cy0 };
-  // 막대 왼쪽 · 위 선(노드 반지름과 여유 12px)
+  // Dock's left · top edges (node radius plus 12px margin)
   const ex = box.w - corner.w - 12, ey = box.h - corner.h - 12;
   const room = (cy: number) => cx < ex && cy < ey ? Math.hypot(ex - cx, ey - cy) : cx < ex ? ex - cx : cy < ey ? ey - cy : 0;
   let best = { R: -Infinity, cy: cy0 };
@@ -74,7 +74,7 @@ export function NetworkPreview({ graph, palette, layout, view, emphasis, selecte
   const host = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [hover, setHover] = useState<string | null>(null);
-  // 터치(굵은 포인터)에서는 누르는 영역을 넓힌다(지름 40px)
+  // Enlarge the hit area for touch (coarse pointer): 40px diameter
   const [coarse, setCoarse] = useState(() => matchMedia('(pointer: coarse)').matches);
   useEffect(() => {
     const list = matchMedia('(pointer: coarse)');
@@ -129,7 +129,7 @@ export function NetworkPreview({ graph, palette, layout, view, emphasis, selecte
   const density = Math.min(1, Math.max(0.3, Math.sqrt(500 / Math.max(edges.length, 1))));
   const edgeStyle = (e: Edge) => {
     const touches = (id: string | null) => !!id && (e.source === id || e.target === id);
-    // 선이 많으면 겹친 선이 화면을 덮지 않게 기본 진하기를 낮춘다(주제 연결 금색은 한 번 더)
+    // With many edges, lower the base opacity so overlapping lines don't cover the screen (gold topic links once more)
     const base = (e.kind === 'primary' ? 0.42 : e.kind === 'index' ? 0.72 : 0.34) * density * (e.kind === 'topic' && density < 1 ? 0.6 : 1);
     const inArea = !emphasis || (emphasis.has(e.target) && (emphasis.has(e.source) || e.source === graph.routerId));
     let opacity = base;
@@ -143,7 +143,7 @@ export function NetworkPreview({ graph, palette, layout, view, emphasis, selecte
 
   const ordered = useMemo(() => [...graph.docs].sort((a, b) => ORDER[a.kind] - ORDER[b.kind]), [graph]);
 
-  // 이름표 겹침 제어: 화면 좌표에서 순위대로 자리를 잡고, 겹치는 이름표는 숨긴다(선택 · 가리킴은 항상 보임)
+  // Label overlap control: place labels by priority in screen coordinates and hide overlapping ones (selected · hovered always shown)
   const labelled = useMemo(() => {
     const cands: { id: string; rank: number; box: { x: number; y: number; w: number; h: number } }[] = [];
     for (const doc of graph.docs) {
@@ -179,7 +179,7 @@ export function NetworkPreview({ graph, palette, layout, view, emphasis, selecte
     <div ref={host} className="stage__canvas">
       {box.w > 0 && (
         <svg className="net" width={box.w} height={box.h} role="img"
-          aria-label={`세컨드 브레인 연결망 임시 미리보기. 문서 ${graph.docs.length}개, 연결 ${edges.length}개. 검색과 상세 패널에서 같은 내용을 키보드로 확인할 수 있습니다.`}>
+          aria-label={`Second Brain network fallback preview. ${graph.docs.length} docs, ${edges.length} links. The same content is available by keyboard from search and the detail panel.`}>
           <defs>
             <filter id="net-soft" x="-150%" y="-150%" width="400%" height="400%"><feGaussianBlur stdDeviation="7" /></filter>
           </defs>

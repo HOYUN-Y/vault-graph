@@ -4,11 +4,11 @@ import { formatOfPath, kindOfPath, opaqueId } from '../src/core/vault';
 import { DEMO_PRIMARY, demoDataset } from '../src/data/demo';
 import { demo, vault } from './helpers';
 
-test('경로 규칙: 최상위 CLAUDE.md · 영역.md · 영역--주제.md · moc-주제.md · project-이름.md, 그 밖(src-* 등)은 원문 자료', () => {
+test('path rules: top-level CLAUDE.md, area.md, area--topic.md, moc-topic.md, project-name.md; anything else (src-* etc.) is a material', () => {
   const cases: [string, string][] = [
-    ['CLAUDE.md', 'router'], ['work.md', 'area'], ['personal--포트폴리오.md', 'subindex'], ['work--a--b.md', 'subindex'],
-    ['moc-배포.md', 'moc'], ['moc-배포--운영.md', 'moc'], ['project-nova.md', 'guide'],
-    ['src-work/work.md', 'material'], ['src-work/CLAUDE.md', 'material'], ['src-work/moc-x.md', 'material'], ['보드.png', 'material']
+    ['CLAUDE.md', 'router'], ['work.md', 'area'], ['personal--portfolio.md', 'subindex'], ['work--a--b.md', 'subindex'],
+    ['moc-deploy.md', 'moc'], ['moc-deploy--ops.md', 'moc'], ['project-nova.md', 'guide'],
+    ['src-work/work.md', 'material'], ['src-work/CLAUDE.md', 'material'], ['src-work/moc-x.md', 'material'], ['board.png', 'material']
   ];
   for (const [path, kind] of cases) assert.equal(kindOfPath(path), kind, path);
   assert.equal(formatOfPath('src-work/a.PDF'), 'pdf');
@@ -16,40 +16,40 @@ test('경로 규칙: 최상위 CLAUDE.md · 영역.md · 영역--주제.md · mo
   assert.equal(formatOfPath('src-work/a.key'), null);
 });
 
-test('고유 ID: 정규 경로에서 결정적으로 만들고 경로 문자열을 드러내지 않는다', () => {
-  const id = opaqueId('src-work/operations/회의록.md');
-  assert.equal(id, opaqueId('src-work/operations/회의록.md'));
-  assert.notEqual(id, opaqueId('src-personal/operations/회의록.md'));
+test('unique ID: deterministic from the canonical path and does not reveal the path string', () => {
+  const id = opaqueId('src-work/operations/minutes.md');
+  assert.equal(id, opaqueId('src-work/operations/minutes.md'));
+  assert.notEqual(id, opaqueId('src-personal/operations/minutes.md'));
   assert.match(id, /^d[0-9a-z]+$/);
 });
 
-test('공유 원문: 영역 색인 · 다른 영역 색인 · MOC가 서로 다른 표기(인코딩 · 꺾쇠 · NFD · 상대경로)로 연결해도 노드는 하나다', () => {
-  const name = '회의록 요약.md';
+test('shared source file: one node even when an area index, another area index and a MOC link it in different forms (encoding, angle brackets, NFD, relative path)', () => {
+  const name = '회의록 요약.md'; // Korean on purpose: tests percent-encoding and NFD
   const v = vault({
-    r: ['CLAUDE.md', '[업무](work.md) [개인](personal.md) [AI](moc-AI.md)'],
-    work: ['work.md', '[운영](work--ops.md)'],
-    personal: ['personal.md', '[학습](personal--learn.md)'],
-    ops: ['work--ops.md', `[회의록](src-work/ops/${encodeURIComponent('회의록 요약')}.md)`],
-    learn: ['personal--learn.md', `[함께 보기](<src-work/ops/${name}>) [노트](src-personal/learn/note.md)`],
-    ai: ['moc-AI.md', `[프롬프트](src-work/ops/${name.normalize('NFD').replace(/ /g, '%20')}#규칙)`],
-    note: ['src-personal/learn/note.md', `[업무 쪽](../../src-work/ops/${name.replace(/ /g, '%20')})`],
+    r: ['CLAUDE.md', '[Work](work.md) [Personal](personal.md) [AI](moc-AI.md)'],
+    work: ['work.md', '[Ops](work--ops.md)'],
+    personal: ['personal.md', '[Learning](personal--learn.md)'],
+    ops: ['work--ops.md', `[Minutes](src-work/ops/${encodeURIComponent('회의록 요약')}.md)`],
+    learn: ['personal--learn.md', `[See also](<src-work/ops/${name}>) [Note](src-personal/learn/note.md)`],
+    ai: ['moc-AI.md', `[Prompt](src-work/ops/${name.normalize('NFD').replace(/ /g, '%20')}#rules)`],
+    note: ['src-personal/learn/note.md', `[Work side](../../src-work/ops/${name.replace(/ /g, '%20')})`],
     shared: [`src-work/ops/${name}`, '']
   });
   assert.deepEqual(v.g.problems, []);
   assert.equal(v.g.docs.length, 8);
   assert.deepEqual(v.names(v.g.inLinks.get(v.id('shared'))!), ['ai', 'learn', 'note', 'ops']);
-  // 주 분류는 영역 축에서 먼저 닿은 색인 하나, 나머지는 색인 연결 · 주제 연결
+  // Primary parent is the first index reached on the area axis; the rest are index and topic links
   assert.equal(v.name(v.g.byId.get(v.id('shared'))!.parent!), 'ops');
   const kinds = v.g.relations.filter(r => r.target === v.id('shared')).map(r => `${v.name(r.source)}:${r.kind}`).sort();
   assert.deepEqual(kinds, ['ai:topic', 'learn:index', 'note:topic', 'ops:primary']);
 });
 
-test('동명 다른 경로: 제목 · 파일명이 같아도 경로가 다르면 다른 노드이고, 링크는 경로대로 각자를 고른다', () => {
+test('same name, different path: same title or file name but different paths are separate nodes, and links pick each by path', () => {
   const v = vault({
-    r: ['CLAUDE.md', '[업무](work.md) [개인](personal.md)'],
-    work: ['work.md', '[회고](src-work/weekly-review.md)'],
-    personal: ['personal.md', '[회고](src-personal/journal/weekly-review.md)'],
-    a: ['src-work/weekly-review.md', '[개인 회고](../src-personal/journal/weekly-review.md)'],
+    r: ['CLAUDE.md', '[Work](work.md) [Personal](personal.md)'],
+    work: ['work.md', '[Review](src-work/weekly-review.md)'],
+    personal: ['personal.md', '[Review](src-personal/journal/weekly-review.md)'],
+    a: ['src-work/weekly-review.md', '[Personal review](../src-personal/journal/weekly-review.md)'],
     b: ['src-personal/journal/weekly-review.md', '']
   });
   assert.deepEqual(v.g.problems, []);
@@ -59,59 +59,60 @@ test('동명 다른 경로: 제목 · 파일명이 같아도 경로가 다르면
   assert.deepEqual(v.names(v.g.outLinks.get(v.id('a'))!), ['b']);
 });
 
-test('분류는 디스크 폴더가 아니라 색인 링크로 정한다: 원문 위치와 무관하고, 라우터 프로젝트 표는 바로가기로 남는다', () => {
+test('classification follows index links, not disk folders: source location is irrelevant and the router project table stays as shortcuts', () => {
   const v = vault({
-    r: ['CLAUDE.md', '## 영역\n[업무](work.md)\n## 프로젝트\n[노바](project-nova.md) [홀로](project-solo.md)\n## 주제\n[기획](moc-plan.md)'],
-    work: ['work.md', '[프로젝트](work--projects.md)'],
-    projects: ['work--projects.md', '[노바](project-nova.md)'],
-    nova: ['project-nova.md', '[기획서](src-personal/떨어진/곳/brief.md)'],
-    solo: ['project-solo.md', '[메모](src-work/solo.md)'],
-    plan: ['moc-plan.md', '[기획서](src-personal/떨어진/곳/brief.md) [아이디어](src-work/idea.md)'],
-    brief: ['src-personal/떨어진/곳/brief.md', ''],
+    r: ['CLAUDE.md', '## Areas\n[Work](work.md)\n## Projects\n[Nova](project-nova.md) [Solo](project-solo.md)\n## Topics\n[Planning](moc-plan.md)'],
+    work: ['work.md', '[Projects](work--projects.md)'],
+    projects: ['work--projects.md', '[Nova](project-nova.md)'],
+    nova: ['project-nova.md', '[Brief](src-personal/far/away/brief.md)'],
+    solo: ['project-solo.md', '[Memo](src-work/solo.md)'],
+    plan: ['moc-plan.md', '[Brief](src-personal/far/away/brief.md) [Idea](src-work/idea.md)'],
+    brief: ['src-personal/far/away/brief.md', ''],
     memo: ['src-work/solo.md', ''],
     idea: ['src-work/idea.md', '']
   });
   assert.deepEqual(v.g.problems, []);
   const parent = (n: string) => v.name(v.g.byId.get(v.id(n))!.parent ?? 'none');
-  assert.equal(parent('nova'), 'projects', '영역 색인이 연결한 프로젝트 안내는 그 영역에 분류');
-  assert.equal(parent('brief'), 'nova', 'src-personal 안에 있어도 업무 쪽 안내가 분류');
+  assert.equal(parent('nova'), 'projects', 'a project guide linked from an area index belongs to that area');
+  assert.equal(parent('brief'), 'nova', 'the work guide claims it even though it sits in src-personal');
   assert.equal(v.g.areaOf.get(v.id('brief')), v.id('work'));
-  assert.equal(parent('solo'), 'r', '영역 색인이 연결하지 않은 프로젝트 안내만 라우터 아래');
-  assert.equal(parent('idea'), 'plan', 'MOC만 연결한 자료는 그 MOC 아래(주제 축)');
+  assert.equal(parent('solo'), 'r', 'only project guides no area index links go under the router');
+  assert.equal(parent('idea'), 'plan', 'a material linked only from a MOC goes under that MOC (topic axis)');
   assert.deepEqual(v.g.relations.filter(r => r.source === v.id('r') && r.target === v.id('nova')).map(r => r.kind), ['index']);
 });
 
-test('구조 문제 보고: 같은 경로 중복 · 끊긴 링크 · 볼트 밖 링크 · 닿지 않는 문서 · 라우터 수. 폴더 링크는 노드가 아니라 원문 루트 목록이 된다', () => {
+test('structural problems: duplicate paths, broken links, links outside the vault, unreachable documents, router count; folder links become source roots, not nodes', () => {
   const v = vault({
-    r: ['CLAUDE.md', '[업무](work.md) [없음](ghost.md) [밖](../outside.md)\n| [src-work](src-work) | 가상 | 업무 |\n[하위 폴더](src-work/ops)'],
-    work: ['work.md', '[자료](src-work/ops/a.md)'],
+    r: ['CLAUDE.md', '[Work](work.md) [Missing](ghost.md) [Outside](../outside.md)\n| [src-work](src-work) | virtual | Work |\n[Subfolder](src-work/ops)'],
+    work: ['work.md', '[Material](src-work/ops/a.md)'],
     dup: ['src-work/ops/./a.md', ''],
     a: ['src-work/ops/a.md', ''],
     lost: ['src-work/lost.md', ''],
     r2: ['src-x/../CLAUDE.md', '']
   });
   const text = v.g.problems.join('\n');
-  for (const word of ['같은 원문 경로가 두 번 있음: src-work/ops/a.md', '끊긴 링크: CLAUDE.md → ghost.md', '끊긴 링크(볼트 밖 경로)', '닿지 않는 문서: src-work/lost.md'])
+  for (const word of ['Duplicate source path: src-work/ops/a.md', 'Broken link: CLAUDE.md → ghost.md', 'Broken link (outside vault)', 'not reachable from the router via index links: src-work/lost.md'])
     assert.ok(text.includes(word), word);
-  assert.deepEqual(v.g.sourceRoots, ['src-work'], 'src-* 최상위 폴더만 원문 루트로 찾는다');
-  assert.equal(v.g.docs.length, 4, '정규화 후 같은 경로(./ · ..)는 하나만 남는다: 라우터 · 영역 · 자료 · 닿지 않는 문서');
+  assert.deepEqual(v.g.sourceRoots, ['src-work'], 'only top-level src-* folders are source roots');
+  assert.equal(v.g.docs.length, 4, 'after normalization the same path (./, ..) appears once: router, area, material, unreachable document');
   const none = vault({ w: ['work.md', ''] });
-  assert.ok(none.g.problems.some(p => p.includes('라우터는 하나여야')));
+  assert.ok(none.g.problems.some(p => p.includes('exactly one router')));
 });
 
-test('데모 볼트: 스킬 구조(최상위 안내 문서 · src-* 원문 · 상대경로 링크)이고, 링크만으로 찾은 분류가 작성 정의와 같다', () => {
+test('demo vault: follows the skill layout (top-level guide documents, src-* source files, relative links) and link-derived classification matches the authored one', () => {
   const { g, id } = demo();
   assert.deepEqual(g.problems, []);
   assert.deepEqual(g.sourceRoots, ['src-work', 'src-personal', 'src-research']);
   for (const d of g.docs) {
     if (d.kind === 'material') assert.match(d.path, /^src-(work|personal|research)\//, d.path);
-    else assert.ok(!d.path.includes('/'), `안내 문서는 최상위: ${d.path}`);
+    else assert.ok(!d.path.includes('/'), `guide documents are top-level: ${d.path}`);
     assert.equal(d.parent ? g.byId.get(d.parent)!.path : null, DEMO_PRIMARY.get(d.path), d.path);
   }
-  for (const f of demoDataset.files) assert.ok(!f.body.includes('[['), `데모 전용 [[id]] 표기 없음: ${f.path}`);
+  for (const f of demoDataset.files) assert.ok(!f.body.includes('[['), `no demo-only [[id]] syntax: ${f.path}`);
   assert.equal(g.byId.get(id('project-nova.md'))!.kind, 'guide');
-  // 공유 원문 하나를 영역 색인 · 다른 영역 색인 · MOC가 함께 연결한다(노드 하나)
-  const shared = id('src-work/operations/prompts/회의록 요약 프롬프트.md');
-  const sources = (g.inLinks.get(shared) ?? []).map(s => g.byId.get(s)!.path);
-  for (const p of ['work--operations.md', 'personal--learning.md', 'moc-AI-활용.md']) assert.ok(sources.includes(p), p);
+  // One shared source file is linked from an area index, another area index and a MOC (one node)
+  const sources = (docId: string) => (g.inLinks.get(docId) ?? []).map(s => g.byId.get(s)!);
+  const shared = g.docs.find(d => d.kind === 'material' && sources(d.id).some(s => s.kind === 'moc')
+    && ['work--operations.md', 'personal--learning.md'].every(p => sources(d.id).some(s => s.path === p)));
+  assert.ok(shared, 'a material shared by two area indexes and a MOC');
 });

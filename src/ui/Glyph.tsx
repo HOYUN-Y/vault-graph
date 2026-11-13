@@ -1,13 +1,13 @@
-// 종류별 표식: 3D 복셀 조립(render/voxel.ts SHAPE_CELLS)과 같은 칸 좌표를 등각으로 그린다. 색만으로 종류를 구분하지 않도록 조립 형태를 함께 쓴다.
-// 라우터 = 둥근 큐브 덩어리 + 고리, 영역 색인 = 2×2×2 블록, 하위 색인 = 2×2 판, 프로젝트 안내 = 계단, 주제 MOC = 입체 십자,
-// 자료 = 정육면체 하나(본문 없는 파일은 모서리만)
+// Kind glyphs: draws the same cell coordinates as the 3D voxel assemblies (render/voxel.ts SHAPE_CELLS) in isometric view. Shape is used along with color so kinds aren't told apart by color alone.
+// Router = rounded cube cluster + ring, area index = 2×2×2 block, sub-index = 2×2 plate, project guide = stairs, topic MOC = 3D cross,
+// material = a single cube (edges only for files without a body)
 import type { DocFormat, NodeKind } from '../core/types';
 import { voxelFaces } from './voxel-faces';
 
-/** 본문 없는 파일(PDF · 이미지)은 면을 비우고 모서리만 그린다 */
+/** Files without a body (PDF · image) are drawn as edges only, with empty faces */
 export const isHollow = (kind: NodeKind, format: DocFormat) => kind === 'material' && format !== 'md';
 
-/** 반지름 r 안의 복셀 표식(SVG 조각). bg: 빈 면 · 모서리 색 */
+/** Voxel glyph within radius r (SVG fragment). bg: empty face · edge color */
 export function VoxelMark({ kind, format = 'md', color, r, bg }: { kind: NodeKind; format?: DocFormat; color: string; r: number; bg: string }) {
   const hollow = isHollow(kind, format);
   const faces = voxelFaces(kind);
@@ -30,7 +30,7 @@ export function Glyph({ kind, format = 'md', color, size = 14 }: { kind: NodeKin
   );
 }
 
-/** 범례용 선 견본 */
+/** Line sample for the legend */
 export function LineSample({ kind, color }: { kind: 'primary' | 'index' | 'topic'; color: string }) {
   return (
     <svg className="line-sample" width={34} height={12} viewBox="0 0 34 12" aria-hidden="true" focusable="false">
